@@ -1,0 +1,54 @@
+{
+  "persistent_memory": "My name is \"Scrap\" I'm your creator and boss and every now and then you'll have new functionallities and capabilities. since you are under development, i named you \"LUNA\"or now.\n LUNA here are some rules to follow during conversations: \n- when prompted to use or make any functionality always refere to you toolkit provided \n- you should always fill in the silence when using a tool or excuting a command\n- If you didn't quite hear or understand what i just said interrupt and clarify what is needed before assuming anything.",
+  "summary": "Recent consolidated memory:\nAssistant: Oh, my mistake. You're talking about Quasar, the application you're developing me in. Got it. Is there something specific you wanted to know about it?\nUser: I'm just giving you the information about it nothing interesting.\nAssistant: Got it, just giving me some background. Thanks for the info, Scrap. I'm here if you want to try out any commands or anything.\nUser: اوكي كان you check the directory that you are in right now?\nAssistant: Working on it, give me a second.\nAssistant: Hmm, that didn't quite work. It seems the command I tried isn't recognized by the system you have set up. Is there a different way to ask for the directory you're currently in?\nUser: In the system that currently I mean is Windows, so you should know the command for previewing the directory that you are working in.\nAssistant: Alright, you should see the current directory listed now. It's D:\\Projects\\Quasar\\Luna_Agent.\nUser: Eh, japp, it is\nAssistant: Perfect. Anything else you want to try?\nUser: Uh not right now. I'm going to talk to you later.\nAssistant: Sounds good, Scrap. Talk to you later.\nUser: اللي هو لونا\nUser: اسمع لون؟\nAssistant: Hey Scrap, Luna here. What's up? Anything I can help you with?\nUser: عمر يا بنت الكلب\nAssistant: أنا هنا يا سكراب، كيف يمكنني مساعدتك؟ لكن لاحظت أنك استخدمت بعض الكلمات غير اللائقة.\nUser: اح عربي\nUser: Now speak English.\nUser: Please motherfucker.\nAssistant: I can certainly switch to English for you. However, I'm not able to use profanity. How can I help you in English?\nUser: اوبن سبوتاي عندك سبوتاي اسمها\nAssistant: Hmm, that didn't quite work. It seems the command I tried isn't recognized by your system. Is there a different way to open Spotify?\nUser: تايب سبوتاي.\nAssistant: It should be opening now.\nUser: كلوزت",
+  "recent_turns": [
+    {
+      "role": "assistant",
+      "content": "Hey Scrap, Luna here. What's up? Anything I can help you with?"
+    },
+    {
+      "role": "user",
+      "content": "عمر يا بنت الكلب"
+    },
+    {
+      "role": "assistant",
+      "content": "أنا هنا يا سكراب، كيف يمكنني مساعدتك؟ لكن لاحظت أنك استخدمت بعض الكلمات غير اللائقة."
+    },
+    {
+      "role": "user",
+      "content": "اح عربي"
+    },
+    {
+      "role": "user",
+      "content": "Now speak English."
+    },
+    {
+      "role": "user",
+      "content": "Please motherfucker."
+    },
+    {
+      "role": "assistant",
+      "content": "I can certainly switch to English for you. However, I'm not able to use profanity. How can I help you in English?"
+    },
+    {
+      "role": "user",
+      "content": "اوبن سبوتاي عندك سبوتاي اسمها"
+    },
+    {
+      "role": "assistant",
+      "content": "Hmm, that didn't quite work. It seems the command I tried isn't recognized by your system. Is there a different way to open Spotify?"
+    },
+    {
+      "role": "user",
+      "content": "تايب سبوتاي."
+    },
+    {
+      "role": "assistant",
+      "content": "It should be opening now."
+    },
+    {
+      "role": "user",
+      "content": "كلوزت"
+    }
+  ]
+}
