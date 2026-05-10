@@ -1,4 +1,4 @@
-import { MessageSquare, MessageSquareOff, Mic, MicOff, PhoneOff } from "lucide-react";
+import { MessageSquare, MessageSquareOff, Mic, MicOff, PhoneOff, ScreenShare, ScreenShareOff } from "lucide-react";
 import { useAgent, useConnectionState, useLocalParticipant } from "@livekit/components-react";
 import { toast } from "sonner";
 
@@ -21,6 +21,25 @@ function getMicErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Microphone toggle failed";
 }
 
+function getScreenShareErrorMessage(err: unknown): string {
+  if (err && typeof err === "object" && "name" in err) {
+    const name = String((err as { name?: string }).name);
+    if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+      return "Screen-share permission denied. Allow screen capture and try again.";
+    }
+    if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      return "No shareable screen source was found.";
+    }
+    if (name === "AbortError") {
+      return "Screen-share was canceled.";
+    }
+    if (name === "NotSupportedError") {
+      return "Screen-share is not supported in this environment.";
+    }
+  }
+  return err instanceof Error ? err.message : "Screen-share toggle failed";
+}
+
 function normalizeAgentState(state: string) {
   const lower = state.toLowerCase();
   if (lower.includes("listening")) return { label: "Listening", cls: "bg-indigo-500/20 text-indigo-200" };
@@ -30,7 +49,7 @@ function normalizeAgentState(state: string) {
 }
 
 export function ControlBar({ onDisconnect, showTranscript, onToggleTranscript }: Props) {
-  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+  const { localParticipant, isMicrophoneEnabled, isScreenShareEnabled } = useLocalParticipant();
   const agent = useAgent();
   const connectionState = useConnectionState();
   const pill = normalizeAgentState(agent.state);
@@ -52,6 +71,22 @@ export function ControlBar({ onDisconnect, showTranscript, onToggleTranscript }:
         disabled={!isConnected}
       >
         {isMicrophoneEnabled ? <Mic size={18} /> : <MicOff size={18} />}
+      </button>
+      <button
+        className={`flex h-12 w-12 items-center justify-center rounded-full transition-transform duration-200 ease-out hover:scale-110 active:scale-95 ${
+          isScreenShareEnabled ? "bg-indigo-500/20 text-indigo-200" : "bg-surfaceAlt text-text"
+        }`}
+        onClick={() => void (async () => {
+          try {
+            await localParticipant.setScreenShareEnabled(!isScreenShareEnabled);
+          } catch (err) {
+            toast.error(getScreenShareErrorMessage(err));
+          }
+        })()}
+        disabled={!isConnected}
+        title={isScreenShareEnabled ? "Stop screen share" : "Start screen share"}
+      >
+        {isScreenShareEnabled ? <ScreenShareOff size={18} /> : <ScreenShare size={18} />}
       </button>
       <button
         className="flex h-12 w-12 items-center justify-center rounded-full bg-surfaceAlt text-text transition-colors hover:bg-[#2a2a2a]"

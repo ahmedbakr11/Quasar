@@ -13,6 +13,7 @@ import Login from "@/pages/Login";
 import Profile from "@/pages/Profile";
 import Register from "@/pages/Register";
 import Settings from "@/pages/Settings";
+import Tasks from "@/pages/Tasks";
 import { useAuthStore } from "@/store/authStore";
 
 function ShellTitleBar() {
@@ -39,7 +40,7 @@ export default function App() {
   }, [hydrate]);
 
   useEffect(() => {
-    if (!token && ["/dashboard", "/profile", "/luna", "/settings"].includes(location.pathname)) {
+    if (!token && ["/dashboard", "/profile", "/luna", "/settings", "/tasks"].includes(location.pathname)) {
       navigate("/login", { replace: true });
     }
   }, [location.pathname, navigate, token]);
@@ -59,6 +60,7 @@ export default function App() {
                 <Route path="/profile" element={<Profile />} />
                 <Route path="/luna" element={<Luna />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/tasks" element={<Tasks />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

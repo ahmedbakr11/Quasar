@@ -1,9 +1,10 @@
-import asyncio
 import os
+import json
+import shlex
 import shutil
 import subprocess
 from dotenv import load_dotenv
-from livekit.agents import AgentSession, JobContext, WorkerOptions, cli, llm
+from livekit.agents import AgentSession, JobContext, WorkerOptions, cli, llm, mcp, room_io
 from livekit.plugins import google
 from typing import Annotated
 from memory import (
@@ -14,7 +15,136 @@ from memory import (
     resolve_memory_path,
 )
 
-load_dotenv()
+AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
+AGENT_ENV_PATH = os.path.join(AGENT_DIR, ".env")
+
+# Always load env from Luna_Agent/.env regardless of caller working directory.
+dotenv_loaded = load_dotenv(dotenv_path=AGENT_ENV_PATH, override=False)
+if dotenv_loaded:
+    print(f"Loaded environment from: {AGENT_ENV_PATH}")
+else:
+    print(
+        f"Environment file not found at expected path: {AGENT_ENV_PATH}. "
+        "Falling back to process environment only."
+    )
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_mcp_args(raw_args: str) -> list[str]:
+    if not raw_args:
+        return []
+
+    stripped = raw_args.strip()
+    if stripped.startswith("["):
+        parsed = json.loads(stripped)
+        if not isinstance(parsed, list):
+            raise ValueError("GOOGLE_WORKSPACE_MCP_ARGS JSON must be a list of strings.")
+        if not all(isinstance(item, str) for item in parsed):
+            raise ValueError("GOOGLE_WORKSPACE_MCP_ARGS JSON list must contain only strings.")
+        return parsed
+
+    return shlex.split(stripped, posix=False)
+
+
+def _parse_allowed_tools(raw_tools: str) -> list[str]:
+    if not raw_tools:
+        return []
+
+    return [tool.strip() for tool in raw_tools.split(",") if tool.strip()]
+
+
+def _build_google_workspace_mcp_servers() -> list[mcp.MCPServer]:
+    mcp_enabled = _env_flag("GOOGLE_WORKSPACE_MCP_ENABLED", default=False)
+    if not mcp_enabled:
+        print("MCP disabled: GOOGLE_WORKSPACE_MCP_ENABLED is not truthy.")
+        return []
+
+    command = os.getenv("GOOGLE_WORKSPACE_MCP_COMMAND", "uvx").strip()
+    if not command:
+        raise ValueError("GOOGLE_WORKSPACE_MCP_COMMAND is empty.")
+    if shutil.which(command) is None:
+        raise FileNotFoundError(
+            f"MCP command not found in PATH: {command}. Install it or disable GOOGLE_WORKSPACE_MCP_ENABLED."
+        )
+
+    args = _parse_mcp_args(
+        os.getenv(
+            "GOOGLE_WORKSPACE_MCP_ARGS",
+            '["google-workspace-mcp","--transport","stdio"]',
+        )
+    )
+    timeout_seconds = float(os.getenv("GOOGLE_WORKSPACE_MCP_TIMEOUT_SECONDS", "30"))
+    allowed_tools = _parse_allowed_tools(os.getenv("GOOGLE_WORKSPACE_MCP_ALLOWED_TOOLS", ""))
+    child_env = os.environ.copy()
+
+    print(
+        "MCP enabled:",
+        "server=google-workspace-mcp",
+        f"command={command}",
+        f"args={args}",
+        f"allowed_tools={len(allowed_tools) if allowed_tools else 'all'}",
+        f"timeout={timeout_seconds}s",
+    )
+
+    # Compatibility across livekit-agents versions:
+    # newer signatures may support name/timeout/allowed_tools,
+    # older ones may only accept command/args.
+    constructor_variants = [
+        {
+            "command": command,
+            "args": args,
+            "env": child_env,
+            "client_session_timeout_seconds": timeout_seconds,
+        },
+        {
+            "command": command,
+            "args": args,
+            "env": child_env,
+        },
+    ]
+
+    last_error = None
+    for kwargs in constructor_variants:
+        try:
+            server = mcp.MCPServerStdio(**kwargs)
+            if allowed_tools:
+                print(
+                    "MCP note: this livekit-agents version does not support allowed-tools"
+                    " filtering on MCPServerStdio; exposing all MCP tools."
+                )
+            return [server]
+        except TypeError as e:
+            last_error = e
+            continue
+
+    raise TypeError(f"Unable to initialize MCPServerStdio with supported signatures: {last_error}")
+
+
+def _log_mcp_preflight() -> None:
+    enabled = _env_flag("GOOGLE_WORKSPACE_MCP_ENABLED", default=False)
+    command = os.getenv("GOOGLE_WORKSPACE_MCP_COMMAND", "uvx").strip()
+    args_raw = os.getenv("GOOGLE_WORKSPACE_MCP_ARGS", "")
+    has_client_id = bool(os.getenv("GOOGLE_WORKSPACE_CLIENT_ID"))
+    has_client_secret = bool(os.getenv("GOOGLE_WORKSPACE_CLIENT_SECRET"))
+    has_refresh_token = bool(os.getenv("GOOGLE_WORKSPACE_REFRESH_TOKEN"))
+    command_found = shutil.which(command) is not None if command else False
+
+    print(
+        "MCP preflight:",
+        f"enabled={enabled}",
+        f"command={command or '<empty>'}",
+        f"command_found={command_found}",
+        f"args_set={bool(args_raw.strip())}",
+        f"client_id_set={has_client_id}",
+        f"client_secret_set={has_client_secret}",
+        f"refresh_token_set={has_refresh_token}",
+    )
 
 
 class SystemTools(llm.Toolset):
@@ -114,6 +244,12 @@ async def entrypoint(ctx: JobContext):
 
     model = google.realtime.RealtimeModel(**model_kwargs)
     initial_ctx = build_initial_chat_context(memory_file, memory_recent_items)
+    try:
+        mcp_servers = []
+        mcp_servers.extend(_build_google_workspace_mcp_servers())
+    except Exception as e:
+        print(f"MCP startup disabled due to configuration error: {e}")
+        mcp_servers = []
     print(
         "Memory initialized:",
         f"path={resolved_memory_path}",
@@ -122,23 +258,52 @@ async def entrypoint(ctx: JobContext):
         f"recent_turns={len(loaded_recent)}",
     )
 
-    # Create the Agent configuration
-    agent = MemoryAgent(
-        memory_file=memory_file,
-        memory_recent_items=memory_recent_items,
-        memory_summary_max_chars=memory_summary_max_chars,
-        instructions=combined_instructions,
-        llm=model,
-        chat_ctx=initial_ctx,
-        tools=[SystemTools()]
-    )
+    def _build_agent(extra_tools: list[llm.Toolset]) -> MemoryAgent:
+        return MemoryAgent(
+            memory_file=memory_file,
+            memory_recent_items=memory_recent_items,
+            memory_summary_max_chars=memory_summary_max_chars,
+            instructions=combined_instructions,
+            llm=model,
+            chat_ctx=initial_ctx,
+            tools=[SystemTools(), *extra_tools],
+        )
+
+    # Create MCP toolsets via the current API (passing servers to AgentSession is deprecated).
+    mcp_toolsets: list[mcp.MCPToolset] = []
+    for index, server in enumerate(mcp_servers):
+        mcp_toolsets.append(mcp.MCPToolset(id=f"mcp_toolset_{index}", mcp_server=server))
+
+    agent = _build_agent(mcp_toolsets)
 
     # Create and start the session
-    session = AgentSession()
-    await session.start(agent, room=ctx.room)
+    try:
+        session = AgentSession()
+        await session.start(
+            agent,
+            room=ctx.room,
+            room_options=room_io.RoomOptions(video_input=True),
+        )
+    except Exception as e:
+        # If LiveKit indicates an activity is already running for this session,
+        # don't attempt a second start.
+        if "activity is already running" in str(e).lower():
+            print(f"Session start skipped: {e}")
+            return
+        if not mcp_servers:
+            raise
+        print(f"MCP session startup failed, retrying without MCP: {e}")
+        fallback_agent = _build_agent([])
+        session = AgentSession()
+        await session.start(
+            fallback_agent,
+            room=ctx.room,
+            room_options=room_io.RoomOptions(video_input=True),
+        )
     print("Session started.")
 
 if __name__ == "__main__":
+    _log_mcp_preflight()
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,

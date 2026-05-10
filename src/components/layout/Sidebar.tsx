@@ -1,4 +1,4 @@
-import { Bot, Home, Settings } from "lucide-react";
+import { Bot, Home, ListChecks, Settings } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { UserAvatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -7,6 +7,7 @@ import { useAuthStore } from "@/store/authStore";
 const items = [
   { label: "Luna", icon: Bot, href: "/luna" },
   { label: "Home", icon: Home, href: "/dashboard" },
+  { label: "Tasks", icon: ListChecks, href: "/tasks" },
 ];
 
 export function Sidebar() {
