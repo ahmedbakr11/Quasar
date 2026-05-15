@@ -8,6 +8,9 @@ use commands::auth::{
 use commands::agent::{
     generate_livekit_token, load_agent_config, save_agent_config, test_agent_connection,
 };
+use commands::tasks::{
+    create_task, delete_task, list_tasks, move_task, set_list_color, toggle_subtask, update_task,
+};
 use db::{init_db, AppState};
 use tauri::Manager;
 
@@ -36,7 +39,14 @@ pub fn run() {
             save_agent_config,
             load_agent_config,
             generate_livekit_token,
-            test_agent_connection
+            test_agent_connection,
+            list_tasks,
+            create_task,
+            update_task,
+            move_task,
+            toggle_subtask,
+            delete_task,
+            set_list_color
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

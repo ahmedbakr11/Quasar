@@ -1,7 +1,8 @@
 import { format } from "date-fns";
 import { CalendarClock, CheckCircle2, GripVertical, LayoutGrid, List, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,14 +41,16 @@ const getColor = (token: string) => colorPalette.find((item) => item.token === t
 
 export default function Tasks() {
   const user = useAuthStore((state) => state.user);
+  const sessionToken = useAuthStore((state) => state.sessionToken);
   const {
     tasks,
     lists,
     viewMode,
+    isLoading,
+    loadTasks,
     setViewMode,
     createTask,
     moveTask,
-    reorderLists,
     setListColor,
     setTaskColor,
     toggleSubtask,
@@ -58,11 +61,17 @@ export default function Tasks() {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(defaultForm);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
-  const [dragListId, setDragListId] = useState<string | null>(null);
   const [activeDropZone, setActiveDropZone] = useState<string | null>(null);
   const [colorMenu, setColorMenu] = useState<ColorMenuState>(null);
 
   if (!user) return <Navigate to="/login" replace />;
+  if (!sessionToken) return <Navigate to="/login" replace />;
+
+  useEffect(() => {
+    void loadTasks(sessionToken).catch((err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to load tasks");
+    });
+  }, [loadTasks, sessionToken]);
 
   const tasksByStatus = useMemo(
     () =>
@@ -93,33 +102,33 @@ export default function Tasks() {
     setFormOpen(false);
   };
 
-  const submitTask = () => {
+  const submitTask = async () => {
     if (!form.title.trim() || !form.dueDate) return;
-    createTask({
-      title: form.title,
-      description: form.description,
-      dueDate: form.dueDate,
-      priority: form.priority,
-      status: form.status,
-      subtasks: form.subtasks,
-      colorToken: form.colorToken
-    });
-    resetForm();
+    try {
+      await createTask(sessionToken, {
+        title: form.title,
+        description: form.description,
+        dueDate: form.dueDate,
+        priority: form.priority,
+        status: form.status,
+        subtasks: form.subtasks,
+        colorToken: form.colorToken
+      });
+      resetForm();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create task");
+    }
   };
 
-  const onDropTask = (targetStatus: TaskStatus, targetIndex: number) => {
+  const onDropTask = async (targetStatus: TaskStatus, targetIndex: number) => {
     if (!dragTaskId) return;
-    moveTask(dragTaskId, targetStatus, targetIndex);
-    setDragTaskId(null);
-    setActiveDropZone(null);
-  };
-
-  const onListDrop = (targetListId: string) => {
-    if (!dragListId || dragListId === targetListId) return;
-    const from = lists.findIndex((list) => list.id === dragListId);
-    const to = lists.findIndex((list) => list.id === targetListId);
-    if (from >= 0 && to >= 0) reorderLists(from, to);
-    setDragListId(null);
+    try {
+      await moveTask(sessionToken, dragTaskId, targetStatus, targetIndex);
+      setDragTaskId(null);
+      setActiveDropZone(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to move task");
+    }
   };
 
   return (
@@ -152,14 +161,6 @@ export default function Tasks() {
               return (
                 <article
                   key={list.id}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", list.id);
-                    setDragListId(list.id);
-                  }}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={() => onListDrop(list.id)}
                   className="rounded-xl border border-border bg-surface p-3"
                   style={{ boxShadow: `inset 0 0 0 1px ${color.dot}` }}
                 >
@@ -174,7 +175,11 @@ export default function Tasks() {
                     <select
                       className="rounded border border-border bg-surfaceAlt px-2 py-1 text-xs"
                       value={list.colorToken}
-                      onChange={(event) => setListColor(list.id, event.target.value)}
+                      onChange={(event) =>
+                        void setListColor(sessionToken, list.id, event.target.value).catch((err) => {
+                          toast.error(err instanceof Error ? err.message : "Failed to update list color");
+                        })
+                      }
                     >
                       {colorPalette.map((paletteColor) => (
                         <option key={paletteColor.token} value={paletteColor.token}>
@@ -203,8 +208,16 @@ export default function Tasks() {
                             setDragTaskId(null);
                             setActiveDropZone(null);
                           }}
-                          onToggleSubtask={toggleSubtask}
-                          onDelete={deleteTask}
+                          onToggleSubtask={(taskId, subtaskId) =>
+                            void toggleSubtask(sessionToken, taskId, subtaskId).catch((err) => {
+                              toast.error(err instanceof Error ? err.message : "Failed to update subtask");
+                            })
+                          }
+                          onDelete={(taskId) =>
+                            void deleteTask(sessionToken, taskId).catch((err) => {
+                              toast.error(err instanceof Error ? err.message : "Failed to delete task");
+                            })
+                          }
                           onContextColorMenu={(x, y) => setColorMenu({ taskId: task.id, x, y })}
                         />
                         <DropZone
@@ -256,7 +269,11 @@ export default function Tasks() {
                   <input
                     type="checkbox"
                     checked={task.status === "done"}
-                    onChange={(event) => updateTask(task.id, { status: event.target.checked ? "done" : "todo" })}
+                    onChange={(event) =>
+                      void updateTask(sessionToken, task.id, { status: event.target.checked ? "done" : "todo" }).catch((err) => {
+                        toast.error(err instanceof Error ? err.message : "Failed to update task");
+                      })
+                    }
                   />
                   <div className="min-w-0">
                     <p className={cn("truncate font-medium", task.status === "done" && "text-muted line-through")}>{task.title}</p>
@@ -268,13 +285,21 @@ export default function Tasks() {
                   </span>
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-surfaceAlt px-2 py-0.5 text-xs capitalize">{task.status.replace("_", " ")}</span>
-                    <button className="text-muted hover:text-destructive" onClick={() => deleteTask(task.id)}>
+                    <button
+                      className="text-muted hover:text-destructive"
+                      onClick={() =>
+                        void deleteTask(sessionToken, task.id).catch((err) => {
+                          toast.error(err instanceof Error ? err.message : "Failed to delete task");
+                        })
+                      }
+                    >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
               );
             })}
+            {isLoading && <div className="p-4 text-sm text-muted">Loading tasks...</div>}
           </section>
         )}
 
@@ -292,7 +317,9 @@ export default function Tasks() {
                   className="h-6 w-6 rounded-full border border-border"
                   style={{ backgroundColor: paletteColor.dot }}
                   onClick={() => {
-                    setTaskColor(colorMenu.taskId, paletteColor.token);
+                    void setTaskColor(sessionToken, colorMenu.taskId, paletteColor.token).catch((err) => {
+                      toast.error(err instanceof Error ? err.message : "Failed to update task color");
+                    });
                     setColorMenu(null);
                   }}
                   title={paletteColor.label}
@@ -418,7 +445,7 @@ export default function Tasks() {
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={resetForm}>Cancel</Button>
-              <Button onClick={submitTask} disabled={!form.title.trim() || !form.dueDate}>
+              <Button onClick={() => void submitTask()} disabled={!form.title.trim() || !form.dueDate}>
                 Create Task
               </Button>
             </div>

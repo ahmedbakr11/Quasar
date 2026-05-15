@@ -3,10 +3,12 @@ import json
 import shlex
 import shutil
 import subprocess
+import sqlite3
+from pathlib import Path
 from dotenv import load_dotenv
 from livekit.agents import AgentSession, JobContext, WorkerOptions, cli, llm, mcp, room_io
 from livekit.plugins import google
-from typing import Annotated
+from typing import Annotated, Callable
 from memory import (
     MemoryAgent,
     build_initial_chat_context,
@@ -17,6 +19,7 @@ from memory import (
 
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 AGENT_ENV_PATH = os.path.join(AGENT_DIR, ".env")
+LUNA_IMAGE_ENVELOPE_PREFIX = "[[LUNA_IMAGE_V1]]"
 
 # Always load env from Luna_Agent/.env regardless of caller working directory.
 dotenv_loaded = load_dotenv(dotenv_path=AGENT_ENV_PATH, override=False)
@@ -210,6 +213,260 @@ class SystemTools(llm.Toolset):
         except Exception as e:
             return f"Error: {str(e)}"
 
+
+class TaskTools(llm.Toolset):
+    def __init__(self, username_provider: Callable[[], str | None]):
+        super().__init__(id="task_tools")
+        self._username_provider = username_provider
+
+    def _resolve_db_path(self) -> Path:
+        explicit = os.getenv("QUASAR_DB_PATH", "").strip()
+        if explicit:
+            candidate = Path(explicit)
+            if candidate.exists():
+                return candidate
+        appdata = os.getenv("APPDATA", "").strip()
+        if appdata:
+            candidate = Path(appdata) / "com.quasar.app" / "luna.db"
+            if candidate.exists():
+                return candidate
+        raise FileNotFoundError(
+            "Quasar DB not found. Set QUASAR_DB_PATH to your luna.db path."
+        )
+
+    def _connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._resolve_db_path())
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _require_user_id(self, conn: sqlite3.Connection) -> str:
+        username = (self._username_provider() or "").strip().lower()
+        if not username:
+            raise ValueError("No connected caller identity was found in LiveKit session.")
+        row = conn.execute(
+            "SELECT id FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"No app user mapped to caller identity '{username}'.")
+        return str(row["id"])
+
+    def _load_task(self, conn: sqlite3.Connection, user_id: str, task_id: str) -> dict:
+        row = conn.execute(
+            "SELECT id, title, description, due_date, priority, status, color_token, position, created_at, updated_at "
+            "FROM tasks WHERE id = ? AND user_id = ?",
+            (task_id, user_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Task not found.")
+        subtasks = conn.execute(
+            "SELECT id, text, done FROM task_subtasks WHERE task_id = ? ORDER BY position ASC",
+            (task_id,),
+        ).fetchall()
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "description": row["description"],
+            "dueDate": row["due_date"],
+            "priority": row["priority"],
+            "status": row["status"],
+            "colorToken": row["color_token"],
+            "position": row["position"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "subtasks": [
+                {"id": s["id"], "text": s["text"], "done": bool(s["done"])}
+                for s in subtasks
+            ],
+        }
+
+    @llm.function_tool
+    async def view_tasks(
+        self,
+        status: Annotated[str, "Optional status filter: todo, in_progress, done. Leave empty for all."] = "",
+    ) -> str:
+        """List current tasks for the connected caller."""
+        try:
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                if status.strip():
+                    rows = conn.execute(
+                        "SELECT id FROM tasks WHERE user_id = ? AND status = ? ORDER BY updated_at ASC",
+                        (user_id, status.strip()),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT id FROM tasks WHERE user_id = ? ORDER BY updated_at ASC",
+                        (user_id,),
+                    ).fetchall()
+                tasks = [self._load_task(conn, user_id, str(r["id"])) for r in rows]
+                return json.dumps(tasks, ensure_ascii=False)
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def add_task(
+        self,
+        title: Annotated[str, "Task title"],
+        due_date: Annotated[str, "Due date in YYYY-MM-DD format"],
+        description: Annotated[str, "Task description"] = "",
+        priority: Annotated[str, "Priority: high, medium, low"] = "medium",
+        status: Annotated[str, "Status: todo, in_progress, done"] = "todo",
+        color_token: Annotated[str, "Color token"] = "slate",
+        subtasks_json: Annotated[str, "JSON array of subtask strings, e.g. [\"a\",\"b\"]"] = "[]",
+    ) -> str:
+        """Create a task for the connected caller."""
+        try:
+            parsed = json.loads(subtasks_json) if subtasks_json.strip() else []
+            if not isinstance(parsed, list):
+                return "Error: subtasks_json must be a JSON array of strings."
+            clean_subtasks = [str(x).strip() for x in parsed if str(x).strip()]
+            now = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                next_pos_row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = ?",
+                    (user_id, status),
+                ).fetchone()
+                next_pos = int(next_pos_row["c"]) if next_pos_row else 0
+                task_id = __import__("uuid").uuid4().hex
+                conn.execute(
+                    "INSERT INTO tasks (id, user_id, title, description, due_date, priority, status, color_token, position, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        task_id,
+                        user_id,
+                        title.strip(),
+                        description.strip(),
+                        due_date.strip(),
+                        priority.strip(),
+                        status.strip(),
+                        color_token.strip(),
+                        next_pos,
+                        now,
+                        now,
+                    ),
+                )
+                for idx, text in enumerate(clean_subtasks):
+                    conn.execute(
+                        "INSERT INTO task_subtasks (id, task_id, text, done, position) VALUES (?, ?, ?, 0, ?)",
+                        (__import__("uuid").uuid4().hex, task_id, text, idx),
+                    )
+                conn.commit()
+                return json.dumps(self._load_task(conn, user_id, task_id), ensure_ascii=False)
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def edit_task(
+        self,
+        task_id: Annotated[str, "Task id"],
+        title: Annotated[str, "Optional new title"] = "",
+        description: Annotated[str, "Optional new description"] = "",
+        due_date: Annotated[str, "Optional new due date (YYYY-MM-DD)"] = "",
+        priority: Annotated[str, "Optional new priority"] = "",
+        status: Annotated[str, "Optional new status"] = "",
+        color_token: Annotated[str, "Optional new color token"] = "",
+    ) -> str:
+        """Edit an existing task for the connected caller."""
+        try:
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                existing = conn.execute(
+                    "SELECT title, description, due_date, priority, status, color_token FROM tasks WHERE id = ? AND user_id = ?",
+                    (task_id, user_id),
+                ).fetchone()
+                if existing is None:
+                    return "Error: Task not found."
+                next_values = (
+                    title.strip() or existing["title"],
+                    description.strip() or existing["description"],
+                    due_date.strip() or existing["due_date"],
+                    priority.strip() or existing["priority"],
+                    status.strip() or existing["status"],
+                    color_token.strip() or existing["color_token"],
+                    __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                    task_id,
+                    user_id,
+                )
+                conn.execute(
+                    "UPDATE tasks SET title = ?, description = ?, due_date = ?, priority = ?, status = ?, color_token = ?, updated_at = ? "
+                    "WHERE id = ? AND user_id = ?",
+                    next_values,
+                )
+                conn.commit()
+                return json.dumps(self._load_task(conn, user_id, task_id), ensure_ascii=False)
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def check_subtask(
+        self,
+        task_id: Annotated[str, "Task id"],
+        subtask_id: Annotated[str, "Subtask id"],
+    ) -> str:
+        """Toggle a subtask check state."""
+        try:
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                owns = conn.execute(
+                    "SELECT COUNT(*) AS c FROM tasks WHERE id = ? AND user_id = ?",
+                    (task_id, user_id),
+                ).fetchone()
+                if owns is None or int(owns["c"]) == 0:
+                    return "Error: Task not found."
+                conn.execute(
+                    "UPDATE task_subtasks SET done = CASE done WHEN 1 THEN 0 ELSE 1 END WHERE id = ? AND task_id = ?",
+                    (subtask_id, task_id),
+                )
+                conn.execute(
+                    "UPDATE tasks SET updated_at = ? WHERE id = ?",
+                    (__import__("datetime").datetime.utcnow().isoformat() + "Z", task_id),
+                )
+                conn.commit()
+                return json.dumps(self._load_task(conn, user_id, task_id), ensure_ascii=False)
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def delete_task(
+        self,
+        task_id: Annotated[str, "Task id"],
+    ) -> str:
+        """Delete a task for the connected caller."""
+        try:
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                conn.execute(
+                    "DELETE FROM task_subtasks WHERE task_id = ?",
+                    (task_id,),
+                )
+                deleted = conn.execute(
+                    "DELETE FROM tasks WHERE id = ? AND user_id = ?",
+                    (task_id, user_id),
+                ).rowcount
+                conn.commit()
+                if not deleted:
+                    return "Error: Task not found."
+                return "Task deleted."
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
 async def entrypoint(ctx: JobContext):
     print("Starting agent...")
 
@@ -258,6 +515,25 @@ async def entrypoint(ctx: JobContext):
         f"recent_turns={len(loaded_recent)}",
     )
 
+    def _resolve_livekit_username() -> str | None:
+        room = getattr(ctx, "room", None)
+        if room is None:
+            return None
+        remote = getattr(room, "remote_participants", None)
+        values = []
+        if hasattr(remote, "values"):
+            try:
+                values = list(remote.values())
+            except Exception:
+                values = []
+        elif isinstance(remote, list):
+            values = remote
+        for participant in values:
+            identity = str(getattr(participant, "identity", "") or "").strip()
+            if identity:
+                return identity
+        return None
+
     def _build_agent(extra_tools: list[llm.Toolset]) -> MemoryAgent:
         return MemoryAgent(
             memory_file=memory_file,
@@ -266,7 +542,7 @@ async def entrypoint(ctx: JobContext):
             instructions=combined_instructions,
             llm=model,
             chat_ctx=initial_ctx,
-            tools=[SystemTools(), *extra_tools],
+            tools=[SystemTools(), TaskTools(_resolve_livekit_username), *extra_tools],
         )
 
     # Create MCP toolsets via the current API (passing servers to AgentSession is deprecated).
@@ -276,14 +552,74 @@ async def entrypoint(ctx: JobContext):
 
     agent = _build_agent(mcp_toolsets)
 
+    async def _text_input_cb(sess: AgentSession, ev: room_io.TextInputEvent) -> None:
+        await sess.interrupt()
+        text = ev.text or ""
+        if not text.startswith(LUNA_IMAGE_ENVELOPE_PREFIX):
+            sess.generate_reply(user_input=text)
+            return
+
+        raw = text[len(LUNA_IMAGE_ENVELOPE_PREFIX) :].strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            sess.generate_reply(user_input=text)
+            return
+
+        if not isinstance(payload, dict) or payload.get("type") != "image_message":
+            sess.generate_reply(user_input=text)
+            return
+
+        image_data_url = payload.get("imageDataUrl")
+        if not isinstance(image_data_url, str) or not image_data_url.strip():
+            sess.generate_reply(user_input=text)
+            return
+
+        user_text = payload.get("text", "")
+        if not isinstance(user_text, str):
+            user_text = ""
+        user_text = user_text.strip() or "Please analyze this image."
+
+        mime_type = payload.get("mimeType")
+        if not isinstance(mime_type, str) or not mime_type.strip():
+            mime_type = None
+
+        chat_message = llm.ChatMessage(
+            role="user",
+            content=[
+                user_text,
+                llm.ImageContent(image=image_data_url, mime_type=mime_type),
+            ],
+        )
+        sess.generate_reply(user_input=chat_message)
+
+    async def _start_with_optional_video_input(
+        session_obj: AgentSession,
+        agent_obj: MemoryAgent,
+    ) -> None:
+        try:
+            await session_obj.start(
+                agent_obj,
+                room=ctx.room,
+                room_options=room_io.RoomOptions(
+                    video_input=True,
+                    text_input=room_io.TextInputOptions(text_input_cb=_text_input_cb),
+                ),
+            )
+        except Exception as start_err:
+            print(f"Video input start failed, retrying without video input: {start_err}")
+            await session_obj.start(
+                agent_obj,
+                room=ctx.room,
+                room_options=room_io.RoomOptions(
+                    text_input=room_io.TextInputOptions(text_input_cb=_text_input_cb),
+                ),
+            )
+
     # Create and start the session
     try:
         session = AgentSession()
-        await session.start(
-            agent,
-            room=ctx.room,
-            room_options=room_io.RoomOptions(video_input=True),
-        )
+        await _start_with_optional_video_input(session, agent)
     except Exception as e:
         # If LiveKit indicates an activity is already running for this session,
         # don't attempt a second start.
@@ -295,11 +631,7 @@ async def entrypoint(ctx: JobContext):
         print(f"MCP session startup failed, retrying without MCP: {e}")
         fallback_agent = _build_agent([])
         session = AgentSession()
-        await session.start(
-            fallback_agent,
-            room=ctx.room,
-            room_options=room_io.RoomOptions(video_input=True),
-        )
+        await _start_with_optional_video_input(session, fallback_agent)
     print("Session started.")
 
 if __name__ == "__main__":

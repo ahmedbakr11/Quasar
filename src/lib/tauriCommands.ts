@@ -14,6 +14,42 @@ export type SessionToken = {
   user: UserProfile;
 };
 
+export type TaskStatus = "todo" | "in_progress" | "done";
+export type TaskPriority = "high" | "medium" | "low";
+export type ViewMode = "list" | "card";
+
+export type TaskSubtask = {
+  id: string;
+  text: string;
+  done: boolean;
+};
+
+export type Task = {
+  id: string;
+  title: string;
+  description: string;
+  dueDate: string;
+  priority: TaskPriority;
+  subtasks: TaskSubtask[];
+  status: TaskStatus;
+  colorToken: string;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TaskList = {
+  id: TaskStatus;
+  name: string;
+  colorToken: string;
+  position: number;
+};
+
+export type TaskStatePayload = {
+  tasks: Task[];
+  lists: TaskList[];
+};
+
 function assertTauriRuntime() {
   if (!("__TAURI_INTERNALS__" in window)) {
     throw new Error("This feature needs the desktop app runtime. Start with `npx tauri dev`.");
@@ -64,4 +100,63 @@ export async function updateProfile(payload: {
     display_name: payload.displayName,
     avatar_seed: payload.avatarSeed
   });
+}
+
+export async function listTasks(sessionToken: string): Promise<TaskStatePayload> {
+  assertTauriRuntime();
+  return invoke<TaskStatePayload>("list_tasks", { sessionToken });
+}
+
+export async function createTask(
+  sessionToken: string,
+  payload: {
+    title: string;
+    description: string;
+    dueDate: string;
+    priority: TaskPriority;
+    status: TaskStatus;
+    subtasks: string[];
+    colorToken: string;
+  }
+): Promise<Task> {
+  assertTauriRuntime();
+  return invoke<Task>("create_task", { sessionToken, payload });
+}
+
+export async function updateTask(
+  sessionToken: string,
+  taskId: string,
+  patch: Partial<Pick<Task, "title" | "description" | "dueDate" | "priority" | "status" | "colorToken">>
+): Promise<Task> {
+  assertTauriRuntime();
+  return invoke<Task>("update_task", { sessionToken, taskId, patch });
+}
+
+export async function moveTask(
+  sessionToken: string,
+  taskId: string,
+  toStatus: TaskStatus,
+  toIndex: number
+): Promise<Task> {
+  assertTauriRuntime();
+  return invoke<Task>("move_task", { sessionToken, taskId, payload: { toStatus, toIndex } });
+}
+
+export async function toggleTaskSubtask(
+  sessionToken: string,
+  taskId: string,
+  subtaskId: string
+): Promise<Task> {
+  assertTauriRuntime();
+  return invoke<Task>("toggle_subtask", { sessionToken, taskId, subtaskId });
+}
+
+export async function deleteTask(sessionToken: string, taskId: string): Promise<void> {
+  assertTauriRuntime();
+  return invoke("delete_task", { sessionToken, taskId });
+}
+
+export async function setTaskListColor(sessionToken: string, listId: TaskStatus, colorToken: string): Promise<void> {
+  assertTauriRuntime();
+  return invoke("set_list_color", { sessionToken, listId, colorToken });
 }

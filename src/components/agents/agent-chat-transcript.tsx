@@ -8,6 +8,7 @@ import {
 import { Message, MessageContent, MessageResponse } from '@/components/agents/message';
 import { AgentChatIndicator } from '@/components/agents/agent-chat-indicator';
 import { AnimatePresence } from 'motion/react';
+import { parseLunaImageEnvelope } from '@/components/luna/chatEnvelope';
 
 /**
  * Props for the AgentChatTranscript component.
@@ -54,6 +55,7 @@ export function AgentChatTranscript({
       <ConversationContent>
         {messages.map((receivedMessage) => {
           const { id, timestamp, from, message } = receivedMessage;
+          const imageEnvelope = parseLunaImageEnvelope(message);
           const time = new Date(timestamp);
           const messageOrigin = from?.isLocal ? 'user' : 'assistant';
           const locale = typeof navigator !== 'undefined' ? navigator.language : 'en-US';
@@ -62,7 +64,18 @@ export function AgentChatTranscript({
           return (
             <Message key={id} title={title} from={messageOrigin}>
               <MessageContent>
-                <MessageResponse>{message}</MessageResponse>
+                {imageEnvelope ? (
+                  <div className="space-y-2">
+                    {imageEnvelope.text ? <MessageResponse>{imageEnvelope.text}</MessageResponse> : null}
+                    <img
+                      src={imageEnvelope.imageDataUrl}
+                      alt={imageEnvelope.fileName || 'Attached image'}
+                      className="max-h-56 rounded-md border border-zinc-700 object-contain"
+                    />
+                  </div>
+                ) : (
+                  <MessageResponse>{message}</MessageResponse>
+                )}
               </MessageContent>
             </Message>
           );
