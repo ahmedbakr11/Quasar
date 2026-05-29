@@ -25,6 +25,7 @@ from memory import (
     load_memory_state,
     resolve_memory_path,
 )
+from antigravity_delegator import AntigravityDelegator
 
 try:
     from google import genai as google_genai
@@ -1048,6 +1049,14 @@ async def entrypoint(ctx: JobContext):
     # Connect to the LiveKit room
     await ctx.connect()
 
+    active_session = None
+
+    def _get_session() -> AgentSession | None:
+        return active_session
+
+    def _get_room() -> Any:
+        return getattr(ctx, "room", None)
+
     # Use an explicit realtime model from env when provided.
     # Otherwise let the LiveKit plugin choose its API-appropriate default.
     selected_model = os.getenv("GEMINI_REALTIME_MODEL")
@@ -1136,6 +1145,7 @@ async def entrypoint(ctx: JobContext):
                 NoteTools(_resolve_livekit_username),
                 WebSearchTools(),
                 DelegationTools(),
+                AntigravityDelegator(_get_session, _get_room),
                 *extra_tools,
             ],
         )
@@ -1214,6 +1224,7 @@ async def entrypoint(ctx: JobContext):
     # Create and start the session
     try:
         session = AgentSession()
+        active_session = session
         await _start_with_optional_video_input(session, agent)
     except Exception as e:
         # If LiveKit indicates an activity is already running for this session,
@@ -1226,6 +1237,7 @@ async def entrypoint(ctx: JobContext):
         print(f"MCP session startup failed, retrying without MCP: {e}")
         fallback_agent = _build_agent([])
         session = AgentSession()
+        active_session = session
         await _start_with_optional_video_input(session, fallback_agent)
     print("Session started.")
 
