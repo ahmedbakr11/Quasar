@@ -28,3 +28,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 livekit-api = { version = "0.3", default-features = false, features = ["access-token"] }
 jsonwebtoken = "9"
+base64 = "0.22"

@@ -8,8 +8,15 @@ use commands::auth::{
 use commands::agent::{
     generate_livekit_token, load_agent_config, save_agent_config, test_agent_connection,
 };
+use commands::notes::{
+    create_note, delete_note, list_notes, update_note,
+};
 use commands::tasks::{
     create_task, delete_task, list_tasks, move_task, set_list_color, toggle_subtask, update_task,
+};
+use commands::vault::{
+    clear_mesh_workspace, delete_mesh_asset, list_mesh_assets, list_vault_assets, move_mesh_asset_to_vault,
+    save_vault_asset,
 };
 use db::{init_db, AppState};
 use tauri::Manager;
@@ -40,13 +47,23 @@ pub fn run() {
             load_agent_config,
             generate_livekit_token,
             test_agent_connection,
+            list_notes,
+            create_note,
+            update_note,
+            delete_note,
             list_tasks,
             create_task,
             update_task,
             move_task,
             toggle_subtask,
             delete_task,
-            set_list_color
+            set_list_color,
+            list_vault_assets,
+            list_mesh_assets,
+            save_vault_asset,
+            move_mesh_asset_to_vault,
+            delete_mesh_asset,
+            clear_mesh_workspace
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

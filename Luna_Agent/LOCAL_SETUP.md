@@ -127,6 +127,28 @@ To disable debug again in the current terminal:
 Remove-Item Env:AGENT_MEMORY_DEBUG
 ```
 
+### Internet search tools
+
+Luna includes two built-in internet tools:
+
+- `internet_search`: searches the public web and returns titles, links, and snippets.
+- `read_webpage`: fetches an HTTP/HTTPS page and returns readable text for summarization.
+
+The first implementation uses DuckDuckGo's HTML endpoint through Python standard library HTTP calls, so no extra package or API key is required.
+
+Optional tuning:
+
+```env
+LUNA_WEB_TIMEOUT_SECONDS=12
+LUNA_WEB_MAX_BYTES=1500000
+LUNA_WEB_USER_AGENT=Quasar-Luna/0.1 (+local personal assistant)
+```
+
+Notes:
+- This depends on internet access from the machine running `agent.py`.
+- Search result quality depends on DuckDuckGo's HTML response format.
+- For production, replace this with a dedicated search API provider and rate-limit/error handling.
+
 ## 3) Start frontend + token server
 
 ```powershell

@@ -1,22 +1,23 @@
 import { useMemo, useRef, useState } from "react";
 import { ImagePlus, SendHorizontal, X } from "lucide-react";
-import { useAgent, useSessionMessages } from "@livekit/components-react";
+import { useSessionMessages } from "@livekit/components-react";
 import { toast } from "sonner";
 import { AgentChatTranscript } from "@/components/agents/agent-chat-transcript";
 import { Input } from "@/components/ui/input";
 import { createLunaImageEnvelope } from "@/components/luna/chatEnvelope";
+import { useGlobalAgentState } from "@/components/luna/GlobalAgentState";
 
 const MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024;
 
 export function ChatPanel() {
-  const agent = useAgent();
+  const { agentState } = useGlobalAgentState();
   const { messages, send, isSending } = useSessionMessages();
   const [value, setValue] = useState("");
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [imageName, setImageName] = useState<string>("");
   const [imageMimeType, setImageMimeType] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const stateText = useMemo(() => agent.state.toLowerCase(), [agent.state]);
+  const stateText = useMemo(() => agentState.toLowerCase(), [agentState]);
 
   const onSend = async () => {
     const text = value.trim();
@@ -79,7 +80,7 @@ export function ChatPanel() {
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <AgentChatTranscript
-          agentState={agent.state}
+          agentState={agentState}
           messages={messages}
           className="[&_button]:border-zinc-700 [&_.is-assistant]:text-zinc-200 [&_.is-user]:text-zinc-100"
         />

@@ -214,9 +214,11 @@ pub fn generate_livekit_token(state: State<AppState>, session_token: String) -> 
         return Err("Agent name is required".to_string());
     }
 
+    let unique_room_name = format!("{}-{}", room_name.trim(), &uuid::Uuid::new_v4().to_string()[..8]);
+
     generate_token(
         &user.username,
-        &room_name,
+        &unique_room_name,
         &agent_name,
         livekit_api_key.trim(),
         livekit_api_secret.trim(),

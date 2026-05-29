@@ -50,10 +50,10 @@ const replaceTaskInState = (tasks: Task[], next: Task): Task[] => {
   return tasks.map((task) => (task.id === next.id ? next : task));
 };
 
-export const useTaskStore = create<TaskState>((set, get) => ({
+export const useTaskStore = create<TaskState>((set) => ({
   tasks: [],
   lists: [],
-  viewMode: "list",
+  viewMode: "card",
   isLoading: false,
   loadTasks: async (sessionToken) => {
     set({ isLoading: true });
@@ -81,15 +81,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set((state) => ({ tasks: replaceTaskInState(state.tasks, updated) }));
   },
   moveTask: async (sessionToken, taskId, toStatus, toIndex) => {
-    const moved = await moveTaskApi(sessionToken, taskId, toStatus, toIndex);
-    const withMoved = replaceTaskInState(get().tasks, moved);
-    const affected = withMoved.filter((task) => task.status === toStatus).sort((a, b) => a.position - b.position);
-    set({
-      tasks:
-        withMoved
-          .filter((task) => task.status !== toStatus)
-          .concat(affected.map((task, idx) => ({ ...task, position: idx })))
-    });
+    await moveTaskApi(sessionToken, taskId, toStatus, toIndex);
+    const payload = await listTasks(sessionToken);
+    set({ tasks: payload.tasks, lists: payload.lists });
   },
   setViewMode: (mode) => set({ viewMode: mode }),
   setListColor: async (sessionToken, listId, colorToken) => {

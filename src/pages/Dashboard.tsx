@@ -2,7 +2,6 @@ import { format } from "date-fns";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { Sidebar } from "@/components/layout/Sidebar";
 import { UserAvatar } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
 
@@ -22,9 +21,8 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-40px)] bg-background">
-      <Sidebar />
-      <main className="flex-1 p-8">
+    <div className="min-h-[calc(100vh-40px)] bg-background pb-28">
+      <main className="p-8">
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold">Good morning, {user.display_name ?? user.username}</h1>

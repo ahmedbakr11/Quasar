@@ -9,7 +9,7 @@ import { UserAvatar } from "@/components/ui/avatar";
 import { useAgentStore } from "@/store/agentStore";
 import { useAuthStore } from "@/store/authStore";
 
-type Section = "profile" | "agent";
+type Section = "profile" | "agent" | "appearance" | "keyboard";
 
 export default function Settings() {
   const token = useAuthStore((s) => s.sessionToken);
@@ -19,9 +19,10 @@ export default function Settings() {
   const loadConfig = useAgentStore((s) => s.loadConfig);
   const saveConfig = useAgentStore((s) => s.saveConfig);
   const isConfigured = useAgentStore((s) => s.is_configured);
+  const updateSettings = useAgentStore((s) => s.updateSettings);
+  const popupTransparency = useAgentStore((s) => s.popup_transparency);
+  const muteShortcut = useAgentStore((s) => s.mute_shortcut);
   const [active, setActive] = useState<Section>("profile");
-  const [displayName, setDisplayName] = useState("");
-  const [avatarSeed, setAvatarSeed] = useState("");
   const [agentForm, setAgentForm] = useState({
     livekit_url: "",
     livekit_api_key: "",
@@ -34,11 +35,12 @@ export default function Settings() {
   const [showSecret, setShowSecret] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
+  const [avatarSeedDraft, setAvatarSeedDraft] = useState<string | null>(null);
   const loadedForTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!token) {
-      setConfigLoading(false);
       loadedForTokenRef.current = null;
       return;
     }
@@ -68,13 +70,9 @@ export default function Settings() {
     void run();
   }, [loadConfig, token]);
 
-  useEffect(() => {
-    if (!user) return;
-    setDisplayName(user.display_name ?? "");
-    setAvatarSeed(user.avatar_seed ?? user.id);
-  }, [user]);
-
   const hasExistingSecret = useMemo(() => isConfigured, [isConfigured]);
+  const displayName = displayNameDraft ?? (user?.display_name ?? "");
+  const avatarSeed = avatarSeedDraft ?? (user?.avatar_seed ?? user?.id ?? "");
 
   if (!token) return <Navigate to="/login" replace />;
   if (authLoading || configLoading || !user) return <div className="p-8 text-sm text-zinc-300">Loading settings...</div>;
@@ -97,6 +95,8 @@ export default function Settings() {
         avatarSeed
       });
       setUser(updated as typeof user);
+      setDisplayNameDraft(null);
+      setAvatarSeedDraft(null);
       toast.success("Profile updated.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update profile.");
@@ -129,7 +129,8 @@ export default function Settings() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-40px)] bg-[#0a0a0a] text-zinc-100">
+    <div className="min-h-[calc(100vh-40px)] bg-[#0a0a0a] pb-28 text-zinc-100">
+      <div className="flex h-full">
       <aside className="w-[200px] border-r border-border p-3">
         <button
           className={`mb-1 w-full border-l-2 px-3 py-2 text-left text-sm ${active === "profile" ? "border-l-indigo-500 bg-[#1a1a1a]" : "border-l-transparent text-zinc-400 hover:bg-surfaceAlt"}`}
@@ -138,10 +139,22 @@ export default function Settings() {
           Profile
         </button>
         <button
-          className={`w-full border-l-2 px-3 py-2 text-left text-sm ${active === "agent" ? "border-l-indigo-500 bg-[#1a1a1a]" : "border-l-transparent text-zinc-400 hover:bg-surfaceAlt"}`}
+          className={`mb-1 w-full border-l-2 px-3 py-2 text-left text-sm ${active === "agent" ? "border-l-indigo-500 bg-[#1a1a1a]" : "border-l-transparent text-zinc-400 hover:bg-surfaceAlt"}`}
           onClick={() => setActive("agent")}
         >
           Agent
+        </button>
+        <button
+          className={`mb-1 w-full border-l-2 px-3 py-2 text-left text-sm ${active === "appearance" ? "border-l-indigo-500 bg-[#1a1a1a]" : "border-l-transparent text-zinc-400 hover:bg-surfaceAlt"}`}
+          onClick={() => setActive("appearance")}
+        >
+          Appearance
+        </button>
+        <button
+          className={`w-full border-l-2 px-3 py-2 text-left text-sm ${active === "keyboard" ? "border-l-indigo-500 bg-[#1a1a1a]" : "border-l-transparent text-zinc-400 hover:bg-surfaceAlt"}`}
+          onClick={() => setActive("keyboard")}
+        >
+          Keyboard
         </button>
       </aside>
 
@@ -152,12 +165,12 @@ export default function Settings() {
               <h2 className="text-xl font-semibold">Profile</h2>
               <div className="mt-6 flex items-center gap-4">
                 <UserAvatar seed={avatarSeed} className="h-16 w-16 rounded-full border border-border" />
-                <Button variant="outline" onClick={() => setAvatarSeed(crypto.randomUUID())}>Regenerate Avatar</Button>
+                <Button variant="outline" onClick={() => setAvatarSeedDraft(crypto.randomUUID())}>Regenerate Avatar</Button>
               </div>
               <div className="mt-6 space-y-4">
                 <div>
                   <p className="mb-1 text-sm text-zinc-300">Display Name</p>
-                  <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+                  <Input value={displayName} onChange={(e) => setDisplayNameDraft(e.target.value)} />
                 </div>
                 <div>
                   <p className="mb-1 text-sm text-zinc-300">Username</p>
@@ -257,8 +270,54 @@ export default function Settings() {
               </div>
             </div>
           )}
+
+          {active === "appearance" && (
+            <div className="rounded-xl border border-border bg-surface p-6">
+              <h2 className="text-xl font-semibold">Appearance</h2>
+              <div className="mt-8 space-y-6">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-zinc-300">Luna Popup Transparency</p>
+                    <span className="text-xs text-indigo-400 font-mono">{Math.round(popupTransparency * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1"
+                    step="0.05"
+                    value={popupTransparency}
+                    onChange={(e) => updateSettings({ popup_transparency: parseFloat(e.target.value) })}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <p className="mt-2 text-xs text-zinc-500">Adjust the background opacity of the floating Luna visualizer.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {active === "keyboard" && (
+            <div className="rounded-xl border border-border bg-surface p-6">
+              <h2 className="text-xl font-semibold">Keyboard Shortcuts</h2>
+              <div className="mt-8 space-y-6">
+                <div className="flex items-center justify-between p-4 rounded-xl border border-white/5 bg-zinc-900/50">
+                  <div>
+                    <p className="text-sm font-medium text-zinc-200">Mute / Unmute Luna</p>
+                    <p className="text-xs text-zinc-500 mt-1">Quickly toggle your microphone track.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className="w-32 text-center font-mono text-xs uppercase"
+                      value={muteShortcut}
+                      onChange={(e) => updateSettings({ mute_shortcut: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </main>
+      </div>
     </div>
   );
 }

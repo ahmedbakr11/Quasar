@@ -1,90 +1,57 @@
 # Project Context
 
-Last updated: 2026-05-10 (Africa/Cairo) - session resumed
+Last updated: 2026-05-29 (Africa/Cairo)
 Repo: `D:\Projects\Quasar`
 
 ## Project Overview
-- Desktop-first app using React + TypeScript + Vite + Tauri.
-- Main frontend code lives in `src/`.
-- Separate Python voice agent code lives in `Luna_Agent/` (LiveKit + Gemini realtime).
+- Desktop-first application using React + TypeScript + Vite + Tauri v2.
+- Main frontend code is in `src/`.
+- Backend shell logic is in Rust (`src-tauri/`).
+- Separate Python voice agent code is in `Luna_Agent/` (LiveKit worker + Gemini realtime).
 
-## Tech Stack
-- Frontend: React 18, TypeScript, Vite, Tailwind, Zustand, React Router.
-- Desktop shell: Tauri 2 (`src-tauri/`).
-- Agent service: Python with `livekit-agents`, `livekit-plugins-google`, `google-genai`.
+## Tech Stack & Architecture
+
+### 1. Frontend & Shell
+- **UI Framework**: React 18, TypeScript, Vite, Tailwind CSS, Zustand, React Router.
+- **Desktop Wrapper**: Tauri v2 (`src-tauri/`).
+- **Drag-and-Drop Configuration**: Native file drop interception is disabled via `"dragDropEnabled": false` in [tauri.conf.json](file:///d:/Projects/Quasar/src-tauri/tauri.conf.json) to allow standard HTML5 drag-and-drop to function in the React webview.
+- **Task Page Views**: Hardcoded to Card View (removed List View). Columns scale their heights independently (`items-start`).
+
+### 2. Database (SQLite)
+- Local SQLite database file `luna.db` stored in the user's AppData directory (`com.quasar.app/luna.db`).
+- Contains tables: `users`, `sessions`, `tasks`, `task_subtasks`, `notes`, `agent_config`.
+- Shared access:
+  - **Tauri Backend**: Written in Rust, performs SQL queries for CRUD operations and exposes them as Tauri commands (e.g. `create_task` with optional due date, `update_task`).
+  - **Luna Agent**: Written in Python, accesses the database directly using `sqlite3` to view/manipulate tasks and notes via Gemini tools.
+
+### 3. Agent Service (Luna)
+- LiveKit agent worker running on Python 3.10+ using `livekit-agents` and `livekit-plugins-google` (Gemini realtime API).
+- Uses Google Gemini Multimodal Live API (`gemini-3.1-flash-live-preview`).
+- Integrates Google Workspace Model Context Protocol (MCP) server for Gmail/Calendar/Tasks tools.
+- Uses `ctx.add_shutdown_callback` to terminate all standard I/O-based MCP server subprocesses cleanly on participant disconnect, freeing the worker slot for re-connections.
+
+---
 
 ## Run / Build Commands
-- Frontend dev: `npm run dev`
-- Frontend build: `npm run build`
-- Lint: `npm run lint`
-- Frontend preview: `npm run preview`
-- Agent setup and local workflow: see `Luna_Agent/LOCAL_SETUP.md`.
+- **Frontend dev**: `npm run dev` (starts the local Vite development server).
+- **Frontend build**: `npm run build` (builds the static assets to `dist/`).
+- **Lint**: `npm run lint` (runs ESLint).
+- **Agent runner**: `python agent.py dev` or `python agent.py --dev` (starts the LiveKit agent worker).
+- **Agent setup**: See [LOCAL_SETUP.md](file:///d:/Projects/Quasar/Luna_Agent/LOCAL_SETUP.md).
 
-## Current Working State (Uncommitted)
-The following files are modified or newly added and represent current in-progress work:
+---
 
-### Frontend task management feature
-- Modified: `src/App.tsx`
-  - Added `/tasks` route.
-  - Added auth redirect coverage for `/tasks`.
-- Modified: `src/components/layout/Sidebar.tsx`
-  - Added `Tasks` nav item.
-- Added: `src/pages/Tasks.tsx`
-  - New Tasks page with list/card views.
-  - Drag-and-drop for tasks and lists.
-  - Subtasks support.
-  - Task/list color customization.
-- Added: `src/store/taskStore.ts`
-  - Zustand persisted task store (`quasar.tasks.v1`).
-  - CRUD for tasks, subtask toggling, cross-list move/reorder, list reorder, color and view-mode state.
+## Completed Milestones
+1. **SQLite Backend**: Fully migrated tasks and notes storage to SQLite.
+2. **Reordering Math**: Reordered tasks positioning logic inside [tasks.rs](file:///d:/Projects/Quasar/src-tauri/src/commands/tasks.rs) with clean normalization.
+3. **Zustand Refresh**: Updated [taskStore.ts](file:///d:/Projects/Quasar/src/store/taskStore.ts) to reload data from SQLite via list commands upon drop/reorder.
+4. **Drag-and-Drop Fix**: Resolved drag grabbing/interception issues on the Kanban board (via Tauri configuration and conditional React drop target handlers).
+5. **Reconnection Persistence**: Ensured the LiveKit worker cleanly exits jobs and releases concurrency slots by terminating MCP child processes on room disconnection.
+6. **Task Board Refinements**: Simplified card details, made due dates optional in the schema/UI, added task editing modal, decoupled column heights, and added column color context menus.
 
-### Luna agent updates
-- Modified: `Luna_Agent/agent.py`
-  - Added environment-driven Google Workspace MCP server wiring.
-  - Added fallback session startup without MCP on MCP init failure.
-  - Keeps local memory integration behavior.
-- Modified: `Luna_Agent/LOCAL_SETUP.md`
-  - Expanded setup docs for Google Workspace MCP and refresh-token generation.
-- Modified: `Luna_Agent/requirements.txt`
-  - Dependency updates aligned with MCP/agent runtime.
-- Modified: `Luna_Agent/memory.json`
-  - Runtime conversational memory state file.
-- Modified: `Luna_Agent/__pycache__/agent.cpython-313.pyc`
-  - Generated bytecode artifact (non-source).
+---
 
-## TODO (Priority Ordered)
-1. Run frontend quality gates before more UI work:
-   - Execute `npm run lint` and fix actionable issues in touched frontend files.
-   - Execute `npm run build` and resolve any regressions from task feature additions.
-2. Validate tasks feature end-to-end in app:
-   - Confirm `/tasks` route + sidebar navigation + auth redirects work as expected.
-   - Test create/edit/delete task, subtask toggle, list/card mode persistence, and drag/drop reorder/move.
-3. Refine task-page UX after validation findings:
-   - Improve layout density/spacing and interaction clarity where friction is observed.
-   - Harden drag/drop behavior for edge-cases (empty lists, same-list reordering, rapid moves).
-4. Verify Luna Google Workspace MCP integration end-to-end:
-   - Run Luna with valid MCP credentials and confirm tool discovery.
-   - Validate at least one successful Gmail/Calendar/Tasks action; capture and fix failures.
-5. Finalize repo hygiene for runtime artifacts:
-   - Decide whether `Luna_Agent/memory.json` should be tracked.
-   - Exclude `Luna_Agent/__pycache__/` (and any other generated files) in `.gitignore` if untracked policy is preferred.
-6. Replace template docs:
-   - Rewrite `README.md` with architecture, setup, run, and troubleshooting sections for frontend + Luna agent.
-
-## Open Risks / Notes
-- `README.md` is still mostly Vite template text and does not document actual project architecture.
-- Current repo appears to have a single historical commit (`intial push`), so change history context is limited.
-- Task drag/drop is custom DOM drag events; UX edge-cases should be tested manually.
-
-## Next Session Quick Start
-1. Check workspace status: `git status --short`
-2. Review this file first.
-3. Run lint/build and fix only relevant failures.
-4. Continue from TODO list above.
-
-## Maintenance Rule for This File
-For future sessions, append/update these sections each time:
-- `Current Working State (Uncommitted)`
-- `TODO (Priority Ordered)`
-- `Open Risks / Notes`
-- `Last updated`
+## TODO / Future Roadmap
+1. Validate Google Workspace MCP tool execution end-to-end under varying network conditions.
+2. Clean up template elements: rewrite `README.md` to document Quasar + Luna architecture, dev workflow, and database design.
+3. Test edge cases in tasks (e.g., reordering in rapid succession, handling database read failures gracefully).

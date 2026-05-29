@@ -1,7 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { Sidebar } from "@/components/layout/Sidebar";
 import { UserAvatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,9 +41,8 @@ export default function Profile() {
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-40px)] bg-background">
-      <Sidebar />
-      <main className="flex flex-1 items-start justify-center p-8">
+    <div className="min-h-[calc(100vh-40px)] bg-background pb-28">
+      <main className="flex items-start justify-center p-8">
         <div className="w-full max-w-2xl rounded-xl border border-border bg-surface p-6">
           <div className="mb-6 flex items-center gap-4">
             <UserAvatar seed={user.avatar_seed ?? user.id} className="h-20 w-20 rounded-full border border-border" />

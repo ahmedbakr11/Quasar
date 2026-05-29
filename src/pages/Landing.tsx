@@ -28,8 +28,8 @@ export default function Landing() {
         animate={{ opacity: 1, y: 0 }}
         className="relative z-10 text-center"
       >
-        <h1 className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-7xl font-extrabold text-transparent">Luna</h1>
-        <p className="mt-3 text-lg text-muted">Your personal AI assistant</p>
+        <h1 className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-7xl font-extrabold text-transparent">Quasar</h1>
+        <p className="mt-3 text-lg text-muted">Your personal productivity workspace with Luna inside</p>
         <div className="mt-8 flex items-center justify-center gap-4">
           <Link to="/login"><Button variant="outline">Sign In</Button></Link>
           <Link to="/register"><Button>Get Started</Button></Link>

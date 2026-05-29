@@ -1,9 +1,11 @@
-import { MessageSquare, MessageSquareOff, Mic, MicOff, PhoneOff, ScreenShare, ScreenShareOff } from "lucide-react";
-import { useAgent, useConnectionState, useLocalParticipant } from "@livekit/components-react";
+import { MessageSquare, MessageSquareOff, Mic, MicOff, Phone, PhoneOff, ScreenShare, ScreenShareOff } from "lucide-react";
+import { useLocalParticipant } from "@livekit/components-react";
 import { toast } from "sonner";
+import { useAgentStore } from "@/store/agentStore";
+import { useGlobalAgentState } from "@/components/luna/GlobalAgentState";
+import { useLunaRuntime } from "@/components/luna/LunaRuntimeContext";
 
 type Props = {
-  onDisconnect: () => void;
   showTranscript: boolean;
   onToggleTranscript: () => void;
 };
@@ -40,7 +42,10 @@ function getScreenShareErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Screen-share toggle failed";
 }
 
-function normalizeAgentState(state: string) {
+function normalizeAgentState(state: string, isConnected: boolean) {
+  if (!isConnected) {
+    return { label: "Luna's Sleeping", cls: "bg-zinc-800/40 text-zinc-400" };
+  }
   const lower = state.toLowerCase();
   if (lower.includes("listening")) return { label: "Listening", cls: "bg-indigo-500/20 text-indigo-200" };
   if (lower.includes("thinking")) return { label: "Thinking", cls: "bg-amber-500/20 text-amber-200" };
@@ -48,12 +53,13 @@ function normalizeAgentState(state: string) {
   return { label: "Idle", cls: "bg-[#333333] text-zinc-300" };
 }
 
-export function ControlBar({ onDisconnect, showTranscript, onToggleTranscript }: Props) {
+export function ControlBar({ showTranscript, onToggleTranscript }: Props) {
+  const { connectionState, connect, disconnect } = useLunaRuntime();
   const { localParticipant, isMicrophoneEnabled, isScreenShareEnabled } = useLocalParticipant();
-  const agent = useAgent();
-  const connectionState = useConnectionState();
-  const pill = normalizeAgentState(agent.state);
+  const { agentState } = useGlobalAgentState();
+  const muteShortcut = useAgentStore((s) => s.mute_shortcut);
   const isConnected = connectionState === "connected";
+  const pill = normalizeAgentState(agentState, isConnected);
 
   return (
     <div className="mt-6 flex items-center justify-center gap-4">
@@ -69,6 +75,7 @@ export function ControlBar({ onDisconnect, showTranscript, onToggleTranscript }:
           }
         })()}
         disabled={!isConnected}
+        title={`Mute/Unmute (${muteShortcut})`}
       >
         {isMicrophoneEnabled ? <Mic size={18} /> : <MicOff size={18} />}
       </button>
@@ -95,12 +102,23 @@ export function ControlBar({ onDisconnect, showTranscript, onToggleTranscript }:
       >
         {showTranscript ? <MessageSquare size={18} /> : <MessageSquareOff size={18} />}
       </button>
-      <button
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-surfaceAlt text-text hover:bg-red-500/20 hover:text-red-400"
-        onClick={onDisconnect}
-      >
-        <PhoneOff size={18} />
-      </button>
+      {isConnected ? (
+        <button
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-surfaceAlt text-text hover:bg-red-500/20 hover:text-red-400 transition-transform duration-200 ease-out hover:scale-110 active:scale-95"
+          onClick={() => void disconnect()}
+          title="Disconnect"
+        >
+          <PhoneOff size={18} />
+        </button>
+      ) : (
+        <button
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-500 transition-transform duration-200 ease-out hover:scale-110 active:scale-95"
+          onClick={() => void connect()}
+          title="Connect"
+        >
+          <Phone size={18} />
+        </button>
+      )}
       <div className={`rounded-full px-3 py-1 text-xs ${pill.cls}`}>{pill.label}</div>
     </div>
   );

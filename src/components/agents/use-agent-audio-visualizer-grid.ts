@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type AgentState } from '@livekit/components-react';
 
 export interface Coordinate {
@@ -43,11 +43,18 @@ export function generateConnectingSequence(rows: number, columns: number, radius
   return seq;
 }
 
-export function generateListeningSequence(rows: number, columns: number) {
+export function generateListeningSequence(rows: number, columns: number, volume?: number) {
   const center = { x: Math.floor(columns / 2), y: Math.floor(rows / 2) };
-  const noIndex = { x: -1, y: -1 };
+  if (!volume || volume < 0.05) {
+    return [center, { x: -1, y: -1 }, { x: -1, y: -1 }];
+  }
+  // Reactive: higher volume = more center highlights or expansion
+  return [center, center, center];
+}
 
-  return [center, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex];
+export function generateIdleSequence(rows: number, columns: number) {
+  const center = { x: Math.floor(columns / 2), y: Math.floor(rows / 2) };
+  return [center, { x: -1, y: -1 }, { x: -1, y: -1 }, { x: -1, y: -1 }];
 }
 
 export function generateThinkingSequence(rows: number, columns: number) {
@@ -64,40 +71,30 @@ export function generateThinkingSequence(rows: number, columns: number) {
 }
 
 export function useAgentAudioVisualizerGridAnimator(
-  state: AgentState,
+  state: AgentState | "idle",
   rows: number,
   columns: number,
   interval: number,
   radius?: number,
+  volume?: number
 ): Coordinate {
   const [index, setIndex] = useState(0);
-  const [sequence, setSequence] = useState<Coordinate[]>(() => [
-    {
-      x: Math.floor(columns / 2),
-      y: Math.floor(rows / 2),
-    },
-  ]);
-
-  useEffect(() => {
+  const sequence = useMemo(() => {
     const clampedRadius = radius
       ? Math.min(radius, Math.floor(Math.max(rows, columns) / 2))
       : Math.floor(Math.max(rows, columns) / 2);
 
-    if (state === 'thinking') {
-      setSequence(generateThinkingSequence(rows, columns));
-    } else if (state === 'connecting' || state === 'initializing') {
-      const sequence = [...generateConnectingSequence(rows, columns, clampedRadius)];
-      setSequence(sequence);
-    } else if (state === 'listening') {
-      setSequence(generateListeningSequence(rows, columns));
-    } else {
-      setSequence([{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }]);
+    if (state === "thinking") return generateThinkingSequence(rows, columns);
+    if (state === "connecting" || state === "initializing") {
+      return [...generateConnectingSequence(rows, columns, clampedRadius)];
     }
-    setIndex(0);
-  }, [state, rows, columns, radius]);
+    if (state === "listening") return generateListeningSequence(rows, columns, volume);
+    if (state === "idle") return generateIdleSequence(rows, columns);
+    return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
+  }, [columns, radius, rows, state, volume]);
 
   useEffect(() => {
-    if (state === 'speaking') {
+    if (state === "speaking") {
       return;
     }
 

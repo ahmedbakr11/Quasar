@@ -195,7 +195,7 @@ export type AgentAudioVisualizerGridProps = GridOptions & {
    * The current state of the agent. Determines the animation pattern.
    * @defaultValue 'connecting'
    */
-  state?: AgentState;
+  state?: AgentState | 'idle';
   /**
    * The color of the grid cells in hexidecimal format.
    */
@@ -248,18 +248,24 @@ export function AgentAudioVisualizerGrid({
   ...props
 }: AgentAudioVisualizerGridProps & ComponentProps<'div'>) {
   const { columnCount, rowCount, items } = useGrid(size, _columnCount, _rowCount);
+  const volumeBands = useMultibandTrackVolume(audioTrack, {
+    bands: columnCount,
+    loPass: 100,
+    hiPass: 200,
+  });
+  const avgVolume = useMemo(() => {
+    if (volumeBands.length === 0) return 0;
+    return volumeBands.reduce((a, b) => a + b, 0) / volumeBands.length;
+  }, [volumeBands]);
+
   const highlightedCoordinate = useAgentAudioVisualizerGridAnimator(
     state,
     rowCount,
     columnCount,
     interval,
     radius,
+    avgVolume
   );
-  const volumeBands = useMultibandTrackVolume(audioTrack, {
-    bands: columnCount,
-    loPass: 100,
-    hiPass: 200,
-  });
 
   if (children && Array.isArray(children)) {
     throw new Error('AgentAudioVisualizerGrid children must be a single element.');
@@ -278,7 +284,7 @@ export function AgentAudioVisualizerGrid({
         <GridCell
           key={idx}
           index={idx}
-          state={state}
+          state={state as AgentState}
           interval={interval}
           rowCount={rowCount}
           columnCount={columnCount}

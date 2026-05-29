@@ -19,4 +19,16 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: [
+      'src/components/agents/agent-audio-visualizer-grid.tsx',
+      'src/components/agents/button-group.tsx',
+      'src/components/agents/button.tsx',
+      'src/components/agents/conversation.tsx',
+      'src/components/ui/button.tsx',
+    ],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

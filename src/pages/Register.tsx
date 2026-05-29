@@ -23,8 +23,6 @@ export default function Register() {
   const [form, setForm] = useState({ displayName: "", username: "", email: "", password: "", confirmPassword: "" });
   const [loading, setLoading] = useState(false);
 
-  if (token) return <Navigate to="/dashboard" replace />;
-
   const error = useMemo(() => {
     if (form.username.length < 3) return "Username must be at least 3 characters.";
     if (!emailPattern.test(form.email)) return "A valid email is required.";
@@ -32,6 +30,8 @@ export default function Register() {
     if (form.password !== form.confirmPassword) return "Passwords do not match.";
     return null;
   }, [form]);
+
+  if (token) return <Navigate to="/dashboard" replace />;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -51,7 +51,7 @@ export default function Register() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <motion.form initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} onSubmit={onSubmit} className="w-full max-w-md rounded-xl border border-border bg-surface p-6">
-        <h1 className="text-center text-2xl font-bold">Luna</h1>
+        <h1 className="text-center text-2xl font-bold">Quasar</h1>
         <p className="mt-1 text-center text-sm text-muted">Create your account</p>
         <div className="mt-6 space-y-3">
           <Input placeholder="Display Name" value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />

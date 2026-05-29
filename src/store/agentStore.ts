@@ -7,6 +7,8 @@ type AgentConfig = {
   room_name: string;
   agent_name: string;
   is_configured: boolean;
+  popup_transparency: number;
+  mute_shortcut: string;
 };
 
 type SaveAgentConfigPayload = {
@@ -21,6 +23,7 @@ type AgentStore = AgentConfig & {
   is_connected: boolean;
   loadConfig: (sessionToken: string) => Promise<AgentConfig>;
   saveConfig: (sessionToken: string, payload: SaveAgentConfigPayload) => Promise<void>;
+  updateSettings: (settings: Partial<Pick<AgentConfig, "popup_transparency" | "mute_shortcut">>) => void;
   setConnected: (val: boolean) => void;
 };
 
@@ -29,7 +32,9 @@ const defaults: AgentConfig = {
   livekit_api_key: "",
   room_name: "luna-room",
   agent_name: "gemini_voice_agent",
-  is_configured: false
+  is_configured: false,
+  popup_transparency: 0.8,
+  mute_shortcut: "Alt+M"
 };
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
@@ -53,5 +58,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         payload.livekit_api_secret.trim().length > 0
     });
   },
+  updateSettings: (settings) => set((s) => ({ ...s, ...settings })),
   setConnected: (val) => set({ is_connected: val })
 }));

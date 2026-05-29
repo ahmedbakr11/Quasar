@@ -50,6 +50,29 @@ export type TaskStatePayload = {
   lists: TaskList[];
 };
 
+export type Note = {
+  id: string;
+  title: string;
+  body: string;
+  labels: string[];
+  colorToken: string;
+  pinned: boolean;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VaultAsset = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  ext: string;
+  size: number;
+  createdAt: string;
+  relativePath: string;
+  isPersistent: boolean;
+};
+
 function assertTauriRuntime() {
   if (!("__TAURI_INTERNALS__" in window)) {
     throw new Error("This feature needs the desktop app runtime. Start with `npx tauri dev`.");
@@ -159,4 +182,88 @@ export async function deleteTask(sessionToken: string, taskId: string): Promise<
 export async function setTaskListColor(sessionToken: string, listId: TaskStatus, colorToken: string): Promise<void> {
   assertTauriRuntime();
   return invoke("set_list_color", { sessionToken, listId, colorToken });
+}
+
+export async function listNotes(sessionToken: string): Promise<Note[]> {
+  assertTauriRuntime();
+  return invoke<Note[]>("list_notes", { sessionToken });
+}
+
+export async function createNote(
+  sessionToken: string,
+  payload: {
+    title: string;
+    body: string;
+    labels: string[];
+    colorToken: string;
+    pinned: boolean;
+  }
+): Promise<Note> {
+  assertTauriRuntime();
+  return invoke<Note>("create_note", { sessionToken, payload });
+}
+
+export async function updateNote(
+  sessionToken: string,
+  noteId: string,
+  patch: Partial<Pick<Note, "title" | "body" | "labels" | "colorToken" | "pinned" | "archived">>
+): Promise<Note> {
+  assertTauriRuntime();
+  return invoke<Note>("update_note", { sessionToken, noteId, patch });
+}
+
+export async function deleteNote(sessionToken: string, noteId: string): Promise<void> {
+  assertTauriRuntime();
+  return invoke("delete_note", { sessionToken, noteId });
+}
+
+export async function listVaultAssets(sessionToken: string): Promise<VaultAsset[]> {
+  assertTauriRuntime();
+  return invoke<VaultAsset[]>("list_vault_assets", { sessionToken });
+}
+
+export async function listMeshAssets(sessionToken: string): Promise<VaultAsset[]> {
+  assertTauriRuntime();
+  return invoke<VaultAsset[]>("list_mesh_assets", { sessionToken });
+}
+
+export async function saveVaultAsset(payload: {
+  sessionToken: string;
+  fileName: string;
+  mimeType: string;
+  dataBase64: string;
+}): Promise<VaultAsset> {
+  assertTauriRuntime();
+  return invoke<VaultAsset>("save_vault_asset", {
+    sessionToken: payload.sessionToken,
+    payload: {
+      fileName: payload.fileName,
+      mimeType: payload.mimeType,
+      dataBase64: payload.dataBase64
+    }
+  });
+}
+
+export async function moveMeshAssetToVault(payload: {
+  sessionToken: string;
+  relativePath: string;
+}): Promise<VaultAsset> {
+  assertTauriRuntime();
+  return invoke<VaultAsset>("move_mesh_asset_to_vault", {
+    sessionToken: payload.sessionToken,
+    payload: { relativePath: payload.relativePath }
+  });
+}
+
+export async function deleteMeshAsset(payload: { sessionToken: string; relativePath: string }): Promise<void> {
+  assertTauriRuntime();
+  return invoke("delete_mesh_asset", {
+    sessionToken: payload.sessionToken,
+    payload: { relativePath: payload.relativePath }
+  });
+}
+
+export async function clearMeshWorkspace(sessionToken: string): Promise<void> {
+  assertTauriRuntime();
+  return invoke("clear_mesh_workspace", { sessionToken });
 }

@@ -47,7 +47,7 @@ export default function Login() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <motion.form initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} onSubmit={onSubmit} className="w-full max-w-md rounded-xl border border-border bg-surface p-6">
-        <h1 className="text-center text-2xl font-bold">Luna</h1>
+        <h1 className="text-center text-2xl font-bold">Quasar</h1>
         <p className="mt-1 text-center text-sm text-muted">Sign in to continue</p>
         <div className="mt-6 space-y-4">
           <Input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />

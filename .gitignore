@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
 
 # Editor directories and files
 .vscode/*
@@ -23,4 +25,16 @@ dist-ssr
 *.sln
 *.sw?
 
-/Luna_Agent/.env
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Project Specific
+/Luna_Agent/memory.json
+/Luna_Agent/livekit-server.exe

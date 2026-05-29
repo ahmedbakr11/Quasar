@@ -292,9 +292,6 @@ pub fn create_task(
         return Err("Task title is required".to_string());
     }
     let due_date = payload.due_date.trim();
-    if due_date.is_empty() {
-        return Err("Task due date is required".to_string());
-    }
 
     let conn = connection(&state)?;
     let user_id = validate_session(&conn, &session_token)?;
@@ -381,9 +378,6 @@ pub fn update_task(
         return Err("Task title is required".to_string());
     }
     let next_due = patch.due_date.clone().unwrap_or(existing.3.clone()).trim().to_string();
-    if next_due.is_empty() {
-        return Err("Task due date is required".to_string());
-    }
 
     let now = Utc::now().to_rfc3339();
     let mut next_position: i64 = conn
@@ -446,25 +440,49 @@ pub fn move_task(
         )
         .map_err(|_| "Task not found".to_string())?;
 
+    // 1. Temporarily isolate the task from ordering
+    conn.execute(
+        "UPDATE tasks SET status = 'temp_moving', position = -1 WHERE id = ?1 AND user_id = ?2",
+        params![&task_id, &user_id],
+    )
+    .map_err(|e| format!("Failed to isolate task: {e}"))?;
+
+    // 2. Normalize source list (closes the gap)
+    normalize_positions(&conn, &user_id, &source_status)?;
+
+    // 3. Normalize destination list (ensures consecutive indices 0, 1, 2...)
+    normalize_positions(&conn, &user_id, &payload.to_status)?;
+
+    // 4. Calculate bounded destination index
     let destination_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM tasks WHERE user_id = ?1 AND status = ?2 AND id != ?3",
-            params![&user_id, &payload.to_status, &task_id],
+            "SELECT COUNT(*) FROM tasks WHERE user_id = ?1 AND status = ?2",
+            params![&user_id, &payload.to_status],
             |row| row.get(0),
         )
-        .map_err(|e| format!("Failed to move task: {e}"))?;
-
+        .map_err(|e| format!("Failed to count destination: {e}"))?;
     let bounded_index = payload.to_index.max(0).min(destination_count);
-    let now = Utc::now().to_rfc3339();
 
+    // 5. Shift items in destination list to make room
+    conn.execute(
+        "UPDATE tasks 
+         SET position = position + 1 
+         WHERE user_id = ?1 AND status = ?2 AND position >= ?3",
+        params![&user_id, &payload.to_status, &bounded_index],
+    )
+    .map_err(|e| format!("Failed to shift tasks: {e}"))?;
+
+    // 6. Place the task at the destination
+    let now = Utc::now().to_rfc3339();
     conn.execute(
         "UPDATE tasks SET status = ?1, position = ?2, updated_at = ?3 WHERE id = ?4 AND user_id = ?5",
-        params![&payload.to_status, bounded_index, now, &task_id, &user_id],
+        params![&payload.to_status, &bounded_index, now, &task_id, &user_id],
     )
-    .map_err(|e| format!("Failed to move task: {e}"))?;
+    .map_err(|e| format!("Failed to place task: {e}"))?;
 
-    normalize_positions(&conn, &user_id, &source_status)?;
+    // 7. Finally, normalize positions of destination list to ensure clean numbers
     normalize_positions(&conn, &user_id, &payload.to_status)?;
+
     load_task(&conn, &user_id, &task_id)
 }
 

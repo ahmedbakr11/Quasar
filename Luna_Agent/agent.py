@@ -4,11 +4,20 @@ import shlex
 import shutil
 import subprocess
 import sqlite3
+import asyncio
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from dotenv import load_dotenv
 from livekit.agents import AgentSession, JobContext, WorkerOptions, cli, llm, mcp, room_io
-from livekit.plugins import google
+from livekit.plugins import google as livekit_google
 from typing import Annotated, Callable
+from datetime import datetime, timezone
+from uuid import uuid4
 from memory import (
     MemoryAgent,
     build_initial_chat_context,
@@ -16,6 +25,11 @@ from memory import (
     load_memory_state,
     resolve_memory_path,
 )
+
+try:
+    from google import genai as google_genai
+except Exception:
+    google_genai = None
 
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 AGENT_ENV_PATH = os.path.join(AGENT_DIR, ".env")
@@ -147,6 +161,31 @@ def _log_mcp_preflight() -> None:
         f"client_id_set={has_client_id}",
         f"client_secret_set={has_client_secret}",
         f"refresh_token_set={has_refresh_token}",
+    )
+
+
+def _build_environment_facts() -> str:
+    facts: list[str] = []
+
+    vault_path = os.getenv("AGENT_VAULT_PATH", "").strip()
+    if vault_path:
+        facts.append(f"- The user's vault folder is located at: {vault_path}")
+
+    static_facts = os.getenv("AGENT_STATIC_FACTS", "").strip()
+    if static_facts:
+        # Support either newline-separated or pipe-separated facts in env.
+        separators = static_facts.replace("|", "\n")
+        for line in separators.splitlines():
+            item = line.strip()
+            if item:
+                facts.append(f"- {item}")
+
+    if not facts:
+        return ""
+
+    return (
+        "Stable environment facts for this user (assume true unless user says otherwise):\n"
+        + "\n".join(facts)
     )
 
 
@@ -467,6 +506,542 @@ class TaskTools(llm.Toolset):
         except Exception as e:
             return f"Error: {e}"
 
+
+class NoteTools(llm.Toolset):
+    def __init__(self, username_provider: Callable[[], str | None]):
+        super().__init__(id="note_tools")
+        self._username_provider = username_provider
+
+    def _resolve_db_path(self) -> Path:
+        explicit = os.getenv("QUASAR_DB_PATH", "").strip()
+        if explicit:
+            candidate = Path(explicit)
+            if candidate.exists():
+                return candidate
+        appdata = os.getenv("APPDATA", "").strip()
+        if appdata:
+            candidate = Path(appdata) / "com.quasar.app" / "luna.db"
+            if candidate.exists():
+                return candidate
+        raise FileNotFoundError("Quasar DB not found. Set QUASAR_DB_PATH to your luna.db path.")
+
+    def _connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._resolve_db_path())
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _require_user_id(self, conn: sqlite3.Connection) -> str:
+        username = (self._username_provider() or "").strip().lower()
+        if not username:
+            raise ValueError("No connected caller identity was found in LiveKit session.")
+        row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            raise ValueError(f"No app user mapped to caller identity '{username}'.")
+        return str(row["id"])
+
+    def _clean_labels(self, labels: list[object]) -> list[str]:
+        out: list[str] = []
+        for label in labels:
+            cleaned = str(label).strip().lstrip("#")
+            if cleaned and cleaned not in out:
+                out.append(cleaned)
+        return out
+
+    def _load_note(self, conn: sqlite3.Connection, user_id: str, note_id: str) -> dict:
+        row = conn.execute(
+            "SELECT id, title, body, labels, color_token, pinned, archived, created_at, updated_at "
+            "FROM notes WHERE id = ? AND user_id = ?",
+            (note_id, user_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Note not found.")
+        try:
+            labels = json.loads(row["labels"] or "[]")
+        except json.JSONDecodeError:
+            labels = []
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "body": row["body"],
+            "labels": labels if isinstance(labels, list) else [],
+            "colorToken": row["color_token"],
+            "pinned": bool(row["pinned"]),
+            "archived": bool(row["archived"]),
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    @llm.function_tool
+    async def view_notes(
+        self,
+        query: Annotated[str, "Optional search query across title, body, and labels"] = "",
+    ) -> str:
+        """List notes for the connected caller, optionally filtered by query."""
+        try:
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                rows = conn.execute(
+                    "SELECT id FROM notes WHERE user_id = ? AND archived = 0 ORDER BY pinned DESC, updated_at DESC",
+                    (user_id,),
+                ).fetchall()
+                notes = [self._load_note(conn, user_id, str(row["id"])) for row in rows]
+                normalized = query.strip().lower()
+                if normalized:
+                    notes = [
+                        note for note in notes
+                        if normalized in " ".join([note["title"], note["body"], *note["labels"]]).lower()
+                    ]
+                return json.dumps(notes, ensure_ascii=False)
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def add_note(
+        self,
+        title: Annotated[str, "Note title"] = "",
+        body: Annotated[str, "Note body"] = "",
+        labels_json: Annotated[str, "JSON array of labels"] = "[]",
+        color_token: Annotated[str, "Color token"] = "slate",
+        pinned: Annotated[bool, "Whether to pin the note"] = False,
+    ) -> str:
+        """Create a note for the connected caller."""
+        try:
+            if not title.strip() and not body.strip():
+                return "Error: title or body is required."
+            parsed_labels = json.loads(labels_json) if labels_json.strip() else []
+            if not isinstance(parsed_labels, list):
+                return "Error: labels_json must be a JSON array."
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                now = datetime.now(timezone.utc).isoformat()
+                note_id = uuid4().hex
+                conn.execute(
+                    "INSERT INTO notes (id, user_id, title, body, labels, color_token, pinned, archived, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                    (
+                        note_id,
+                        user_id,
+                        title.strip(),
+                        body.strip(),
+                        json.dumps(self._clean_labels(parsed_labels), ensure_ascii=False),
+                        color_token.strip() or "slate",
+                        1 if pinned else 0,
+                        now,
+                        now,
+                    ),
+                )
+                conn.commit()
+                return json.dumps(self._load_note(conn, user_id, note_id), ensure_ascii=False)
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def edit_note(
+        self,
+        note_id: Annotated[str, "Note id"],
+        title: Annotated[str, "Optional new title"] = "",
+        body: Annotated[str, "Optional new body"] = "",
+        labels_json: Annotated[str, "Optional JSON array of labels"] = "",
+        color_token: Annotated[str, "Optional color token"] = "",
+        pinned: Annotated[str, "Optional pinned value: true or false"] = "",
+    ) -> str:
+        """Edit a note for the connected caller."""
+        try:
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                existing = conn.execute(
+                    "SELECT title, body, labels, color_token, pinned FROM notes WHERE id = ? AND user_id = ?",
+                    (note_id, user_id),
+                ).fetchone()
+                if existing is None:
+                    return "Error: Note not found."
+                labels = existing["labels"]
+                if labels_json.strip():
+                    parsed_labels = json.loads(labels_json)
+                    if not isinstance(parsed_labels, list):
+                        return "Error: labels_json must be a JSON array."
+                    labels = json.dumps(self._clean_labels(parsed_labels), ensure_ascii=False)
+                next_pinned = existing["pinned"]
+                if pinned.strip().lower() in {"true", "yes", "1"}:
+                    next_pinned = 1
+                elif pinned.strip().lower() in {"false", "no", "0"}:
+                    next_pinned = 0
+                conn.execute(
+                    "UPDATE notes SET title = ?, body = ?, labels = ?, color_token = ?, pinned = ?, updated_at = ? "
+                    "WHERE id = ? AND user_id = ?",
+                    (
+                        title.strip() or existing["title"],
+                        body.strip() or existing["body"],
+                        labels,
+                        color_token.strip() or existing["color_token"],
+                        next_pinned,
+                        datetime.now(timezone.utc).isoformat(),
+                        note_id,
+                        user_id,
+                    ),
+                )
+                conn.commit()
+                return json.dumps(self._load_note(conn, user_id, note_id), ensure_ascii=False)
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def delete_note(
+        self,
+        note_id: Annotated[str, "Note id"],
+    ) -> str:
+        """Delete a note for the connected caller."""
+        try:
+            conn = self._connection()
+            try:
+                user_id = self._require_user_id(conn)
+                deleted = conn.execute(
+                    "DELETE FROM notes WHERE id = ? AND user_id = ?",
+                    (note_id, user_id),
+                ).rowcount
+                conn.commit()
+                if not deleted:
+                    return "Error: Note not found."
+                return "Note deleted."
+            finally:
+                conn.close()
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class _DuckDuckGoResultParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.results: list[dict[str, str]] = []
+        self._active_result: dict[str, str] | None = None
+        self._capture: str | None = None
+        self._buffer: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {key: value or "" for key, value in attrs}
+        class_name = attrs_dict.get("class", "")
+        if tag == "a" and "result__a" in class_name:
+            self._active_result = {"title": "", "url": self._clean_duckduckgo_url(attrs_dict.get("href", "")), "snippet": ""}
+            self._capture = "title"
+            self._buffer = []
+            return
+        if self._active_result is not None and "result__snippet" in class_name:
+            self._capture = "snippet"
+            self._buffer = []
+
+    def handle_data(self, data: str) -> None:
+        if self._capture:
+            self._buffer.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._active_result is None or self._capture is None:
+            return
+        if tag == "a" and self._capture == "title":
+            self._active_result["title"] = self._clean_text(" ".join(self._buffer))
+            self._capture = None
+            self._buffer = []
+            if self._active_result["title"] and self._active_result["url"]:
+                self.results.append(self._active_result)
+            return
+        if tag in {"a", "div"} and self._capture == "snippet":
+            self._active_result["snippet"] = self._clean_text(" ".join(self._buffer))
+            self._capture = None
+            self._buffer = []
+
+    def _clean_duckduckgo_url(self, href: str) -> str:
+        href = unescape(href or "").strip()
+        if not href:
+            return ""
+        parsed = urllib.parse.urlparse(href)
+        query = urllib.parse.parse_qs(parsed.query)
+        if "uddg" in query and query["uddg"]:
+            return query["uddg"][0]
+        if href.startswith("//"):
+            return f"https:{href}"
+        return href
+
+    def _clean_text(self, value: str) -> str:
+        return re.sub(r"\s+", " ", unescape(value)).strip()
+
+
+class _ReadableTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._skip_depth += 1
+        if tag in {"p", "br", "li", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg"} and self._skip_depth > 0:
+            self._skip_depth -= 1
+        if tag in {"p", "li", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            cleaned = re.sub(r"\s+", " ", data).strip()
+            if cleaned:
+                self.parts.append(cleaned)
+
+    def text(self) -> str:
+        return re.sub(r"\n{3,}", "\n\n", unescape(" ".join(self.parts))).strip()
+
+
+class WebSearchTools(llm.Toolset):
+    def __init__(self):
+        super().__init__(id="web_search_tools")
+
+    def _timeout(self) -> float:
+        return float(os.getenv("LUNA_WEB_TIMEOUT_SECONDS", "12"))
+
+    def _max_bytes(self) -> int:
+        return int(os.getenv("LUNA_WEB_MAX_BYTES", "1500000"))
+
+    def _request(self, url: str) -> bytes:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": os.getenv(
+                    "LUNA_WEB_USER_AGENT",
+                    "Quasar-Luna/0.1 (+local personal assistant)",
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout()) as response:
+            return response.read(self._max_bytes())
+
+    def _assert_safe_url(self, url: str) -> str:
+        parsed = urllib.parse.urlparse(url.strip())
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("Only http and https URLs are supported.")
+        if not parsed.netloc:
+            raise ValueError("URL must include a hostname.")
+        return parsed.geturl()
+
+    @llm.function_tool
+    async def internet_search(
+        self,
+        query: Annotated[str, "Search query for current internet information"],
+        max_results: Annotated[int, "Number of results to return, from 1 to 10"] = 5,
+    ) -> str:
+        """Search the public internet and return result titles, links, and snippets."""
+        try:
+            clean_query = query.strip()
+            if not clean_query:
+                return "Error: query cannot be empty."
+            limit = max(1, min(int(max_results), 10))
+            search_url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode({"q": clean_query})
+
+            raw = await asyncio.to_thread(self._request, search_url)
+            parser = _DuckDuckGoResultParser()
+            parser.feed(raw.decode("utf-8", errors="replace"))
+            deduped: list[dict[str, str]] = []
+            seen_urls: set[str] = set()
+            for result in parser.results:
+                url = result.get("url", "")
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                deduped.append(result)
+                if len(deduped) >= limit:
+                    break
+            if not deduped:
+                return "No search results found."
+            return json.dumps(
+                {
+                    "query": clean_query,
+                    "results": deduped,
+                    "source": "duckduckgo_html",
+                },
+                ensure_ascii=False,
+            )
+        except urllib.error.URLError as e:
+            return f"Error: internet search request failed: {e}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def read_webpage(
+        self,
+        url: Annotated[str, "HTTP or HTTPS webpage URL to read"],
+        max_chars: Annotated[int, "Maximum readable characters to return, from 500 to 12000"] = 5000,
+    ) -> str:
+        """Fetch a webpage URL and return readable text for Luna to summarize or use."""
+        try:
+            safe_url = self._assert_safe_url(url)
+            char_limit = max(500, min(int(max_chars), 12000))
+            raw = await asyncio.to_thread(self._request, safe_url)
+            content = raw.decode("utf-8", errors="replace")
+            parser = _ReadableTextParser()
+            parser.feed(content)
+            text = parser.text()
+            if not text:
+                return "No readable text found on this page."
+            return json.dumps(
+                {
+                    "url": safe_url,
+                    "text": text[:char_limit],
+                    "truncated": len(text) > char_limit,
+                },
+                ensure_ascii=False,
+            )
+        except urllib.error.URLError as e:
+            return f"Error: webpage request failed: {e}"
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class DelegationTools(llm.Toolset):
+    def __init__(self):
+        super().__init__(id="delegation_tools")
+
+    def _resolve_output_root(self) -> Path:
+        root_raw = os.getenv("LUNA_DELEGATION_OUTPUT_DIR", "").strip()
+        if root_raw:
+            root = Path(root_raw).expanduser()
+        else:
+            root = Path(AGENT_DIR).parent / "generated" / "delegations"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def _parse_inputs(self, inputs_json: str) -> list[str]:
+        if not inputs_json.strip():
+            return []
+        parsed = json.loads(inputs_json)
+        if not isinstance(parsed, list):
+            raise ValueError("inputs_json must be a JSON list of file paths.")
+        return [str(item).strip() for item in parsed if str(item).strip()]
+
+    def _read_input_files(self, paths: list[str], per_file_chars: int) -> str:
+        chunks: list[str] = []
+        for idx, raw_path in enumerate(paths, start=1):
+            try:
+                p = Path(raw_path).expanduser().resolve()
+                if not p.exists() or not p.is_file():
+                    chunks.append(f"[Input {idx}] Path not found or not a file: {raw_path}")
+                    continue
+                try:
+                    text = p.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    text = p.read_text(encoding="latin-1", errors="replace")
+                trimmed = text[:per_file_chars]
+                chunks.append(
+                    f"[Input {idx}] path={str(p)}\n{trimmed}\n"
+                    + ("[Truncated]\n" if len(text) > per_file_chars else "")
+                )
+            except Exception as e:
+                chunks.append(f"[Input {idx}] Failed to read {raw_path}: {e}")
+        return "\n".join(chunks)
+
+    async def _run_gemini_delegate(
+        self,
+        task_type: str,
+        instructions: str,
+        file_context: str,
+        model_name: str,
+        max_output_tokens: int,
+    ) -> str:
+        if google_genai is None:
+            raise RuntimeError("google-genai is not importable in this environment.")
+        api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("GOOGLE_API_KEY is not set.")
+
+        prompt = (
+            "You are a delegated execution worker for Luna.\n"
+            "Return only the final deliverable content for the user task.\n"
+            "Do not include internal chain-of-thought.\n\n"
+            f"Task type: {task_type}\n"
+            f"User instructions:\n{instructions}\n\n"
+            "Input file contents (may be truncated):\n"
+            f"{file_context if file_context.strip() else '[No input files provided]'}\n"
+        )
+
+        def _call() -> str:
+            client = google_genai.Client(api_key=api_key)
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config={"max_output_tokens": max_output_tokens},
+            )
+            text = getattr(resp, "text", None)
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+            return str(resp)
+
+        return await asyncio.to_thread(_call)
+
+    @llm.function_tool
+    async def delegate_task(
+        self,
+        task_type: Annotated[str, "Task class, e.g. general, document_analysis, writing, file_summary"],
+        instructions: Annotated[str, "Detailed user task instructions"],
+        inputs_json: Annotated[str, "JSON list of input file paths"] = "[]",
+        preferred_model: Annotated[str, "Currently supports: auto or gemini"] = "auto",
+        output_format: Annotated[str, "Output format: markdown or text"] = "markdown",
+    ) -> str:
+        """Delegate a non-realtime task to a Gemini non-live model and save an artifact."""
+        try:
+            model_pref = preferred_model.strip().lower() or "auto"
+            if model_pref not in {"auto", "gemini"}:
+                return "Error: preferred_model must be 'auto' or 'gemini' for Phase 1."
+
+            fmt = output_format.strip().lower() or "markdown"
+            if fmt not in {"markdown", "text"}:
+                return "Error: output_format must be 'markdown' or 'text'."
+
+            if not instructions.strip():
+                return "Error: instructions cannot be empty."
+
+            paths = self._parse_inputs(inputs_json)
+            per_file_chars = int(os.getenv("LUNA_DELEGATION_INPUT_CHARS_PER_FILE", "12000"))
+            file_context = self._read_input_files(paths, per_file_chars=per_file_chars)
+
+            model_name = os.getenv("GEMINI_DELEGATION_MODEL", "gemini-2.5-flash")
+            max_tokens = int(os.getenv("LUNA_DELEGATION_MAX_OUTPUT_TOKENS", "4096"))
+            generated = await self._run_gemini_delegate(
+                task_type=task_type.strip() or "general",
+                instructions=instructions.strip(),
+                file_context=file_context,
+                model_name=model_name,
+                max_output_tokens=max_tokens,
+            )
+
+            output_root = self._resolve_output_root()
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            ext = ".md" if fmt == "markdown" else ".txt"
+            artifact_name = f"{stamp}_{uuid4().hex[:8]}{ext}"
+            artifact_path = output_root / artifact_name
+            artifact_path.write_text(generated, encoding="utf-8")
+
+            result = {
+                "status": "completed",
+                "taskType": task_type.strip() or "general",
+                "modelUsed": model_name,
+                "outputFormat": fmt,
+                "artifactPath": str(artifact_path.resolve()),
+                "summary": f"Delegated task completed and saved to {artifact_path.name}.",
+            }
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            return f"Error: {e}"
+
+
 async def entrypoint(ctx: JobContext):
     print("Starting agent...")
 
@@ -481,6 +1056,9 @@ async def entrypoint(ctx: JobContext):
         "AGENT_PERSONA",
         "You are a helpful system assistant. You can execute shell commands, call Gemini CLI directly, and manage files on the user's machine using the provided tools. Be concise and professional.",
     )
+    environment_facts = _build_environment_facts()
+    if environment_facts:
+        persona = f"{persona.strip()}\n\n{environment_facts}"
     memory_file = os.getenv("AGENT_MEMORY_FILE", "memory.json")
     memory_recent_items = int(os.getenv("AGENT_MEMORY_RECENT_ITEMS", "12"))
     memory_summary_max_chars = int(os.getenv("AGENT_MEMORY_SUMMARY_MAX_CHARS", "3000"))
@@ -499,7 +1077,7 @@ async def entrypoint(ctx: JobContext):
     if selected_model:
         model_kwargs["model"] = selected_model
 
-    model = google.realtime.RealtimeModel(**model_kwargs)
+    model = livekit_google.realtime.RealtimeModel(**model_kwargs)
     initial_ctx = build_initial_chat_context(memory_file, memory_recent_items)
     try:
         mcp_servers = []
@@ -507,6 +1085,16 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         print(f"MCP startup disabled due to configuration error: {e}")
         mcp_servers = []
+
+    async def cleanup():
+        print("Cleaning up MCP servers...")
+        for server in mcp_servers:
+            try:
+                await server.aclose()
+            except Exception as e:
+                print(f"Error closing MCP server: {e}")
+
+    ctx.add_shutdown_callback(cleanup)
     print(
         "Memory initialized:",
         f"path={resolved_memory_path}",
@@ -542,7 +1130,14 @@ async def entrypoint(ctx: JobContext):
             instructions=combined_instructions,
             llm=model,
             chat_ctx=initial_ctx,
-            tools=[SystemTools(), TaskTools(_resolve_livekit_username), *extra_tools],
+            tools=[
+                SystemTools(),
+                TaskTools(_resolve_livekit_username),
+                NoteTools(_resolve_livekit_username),
+                WebSearchTools(),
+                DelegationTools(),
+                *extra_tools,
+            ],
         )
 
     # Create MCP toolsets via the current API (passing servers to AgentSession is deprecated).
