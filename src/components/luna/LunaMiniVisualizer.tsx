@@ -16,8 +16,8 @@ export function LunaMiniVisualizer() {
   const [isBlinking, setIsBlinking] = useState(false);
 
   const isConnected = connectionState === "connected";
-  const onLunaPage = location.pathname === "/luna";
-  const showPopup = isConnected && !onLunaPage;
+  const isHiddenPage = ["/dashboard", "/luna"].includes(location.pathname);
+  const showPopup = isConnected && !isHiddenPage;
 
   const visualState = agentState;
 
