@@ -72,9 +72,16 @@ class AntigravityDelegator(llm.Toolset):
             task_info = self._active_tasks[task_id]
             process = task_info.get("process")
             if process and task_info.get("status") == "running":
-                print(f"[Antigravity CLI] Terminating task {task_id} on user request")
+                pid = process.pid
+                print(f"[Antigravity CLI] Terminating task {task_id} (PID: {pid}) on user request")
                 try:
-                    process.kill()
+                    import platform
+                    if platform.system() == "Windows":
+                        import subprocess
+                        res = subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, text=True)
+                        print(f"[Antigravity CLI] taskkill output: {res.stdout}, error: {res.stderr}")
+                    else:
+                        process.kill()
                 except Exception as kill_err:
                     print(f"Error terminating process via kill switch: {kill_err}")
 
@@ -111,8 +118,8 @@ class AntigravityDelegator(llm.Toolset):
                 await room_obj.local_participant.publish_data(
                     json.dumps(payload).encode('utf-8')
                 )
-            except Exception:
-                pass
+            except Exception as pe:
+                print(f"[Antigravity CLI] Failed to publish log line to data channel: {pe}")
 
     async def _run_task_background(self, task_id: str, task: str):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

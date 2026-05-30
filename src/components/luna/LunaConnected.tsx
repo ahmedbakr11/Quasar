@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useRoomContext } from "@livekit/components-react";
 import { RoomEvent } from "livekit-client";
 import { AnimatePresence, motion } from "framer-motion";
-import { Terminal, Shield, CheckCircle2, XCircle, X, Loader2 } from "lucide-react";
+import { Terminal, CheckCircle2, XCircle, X, Loader2 } from "lucide-react";
 import { AgentAudioVisualizerGrid } from "@/components/agents/agent-audio-visualizer-grid";
 import { ChatPanel } from "@/components/luna/ChatPanel";
 import { ControlBar } from "@/components/luna/ControlBar";
@@ -78,7 +78,6 @@ function TaskWidget({ task, containerRef, index, onDismiss, onKill }: TaskWidget
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/5 pb-2">
         <div className="flex items-center gap-2 text-indigo-400 font-medium">
-          <Shield className="h-3.5 w-3.5 animate-pulse" />
           <span className="font-semibold tracking-wide uppercase text-[10px]">Antigravity Delegate</span>
         </div>
         <button
@@ -188,13 +187,18 @@ function TaskWidget({ task, containerRef, index, onDismiss, onKill }: TaskWidget
 
       {/* Terminate/Kill Subprocess Switch */}
       {task.status === "running" && (
-        <button
-          onClick={() => onKill(task.id)}
-          className="mt-1 w-full bg-red-500/10 hover:bg-red-500/20 active:bg-red-500/30 text-red-400 hover:text-red-300 font-semibold py-2 px-3 rounded-xl border border-red-500/20 hover:border-red-500/35 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg hover:shadow-red-500/5"
-        >
-          <XCircle className="h-3.5 w-3.5" />
-          <span>Terminate Task</span>
-        </button>
+        <div className="flex justify-end mt-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onKill(task.id);
+            }}
+            className="bg-red-500/10 hover:bg-red-500/20 active:bg-red-500/35 text-red-400 hover:text-red-300 font-semibold px-2 py-0.5 rounded-lg border border-red-500/20 hover:border-red-500/35 transition-all flex items-center gap-1 cursor-pointer text-[9px] uppercase tracking-wider select-none"
+          >
+            <XCircle className="h-2.5 w-2.5" />
+            <span>Terminate</span>
+          </button>
+        </div>
       )}
     </motion.div>
   );
@@ -234,6 +238,7 @@ export function LunaConnected() {
       try {
         const text = new TextDecoder().decode(payload);
         const parsed = JSON.parse(text);
+        console.log("[Antigravity Data Packet]:", parsed);
 
         if (parsed.type === "antigravity_task_status") {
           const taskId = parsed.task_id;
@@ -242,16 +247,19 @@ export function LunaConnected() {
           if (parsed.status === "running") {
             // Re-enable visibility of this specific task widget
             setDismissedTasks((prev) => ({ ...prev, [taskId]: false }));
-            setTasks((prev) => ({
-              ...prev,
-              [taskId]: {
-                id: taskId,
-                task: parsed.task,
-                status: "running",
-                logs: [],
-                startTime: Date.now()
-              }
-            }));
+            setTasks((prev) => {
+              const existingLogs = prev[taskId]?.logs || [];
+              return {
+                ...prev,
+                [taskId]: {
+                  id: taskId,
+                  task: parsed.task,
+                  status: "running",
+                  logs: existingLogs,
+                  startTime: Date.now()
+                }
+              };
+            });
           } else {
             setTasks((prev) => {
               if (!prev[taskId]) return prev;
@@ -271,12 +279,18 @@ export function LunaConnected() {
           if (!taskId) return;
 
           setTasks((prev) => {
-            if (!prev[taskId]) return prev;
+            const existing = prev[taskId] || {
+              id: taskId,
+              task: parsed.task || "Delegated Task",
+              status: "running",
+              logs: [],
+              startTime: Date.now()
+            };
             return {
               ...prev,
               [taskId]: {
-                ...prev[taskId],
-                logs: [...prev[taskId].logs.slice(-99), parsed.log] // Keep last 100 log lines
+                ...existing,
+                logs: [...existing.logs.slice(-99), parsed.log] // Keep last 100 log lines
               }
             };
           });
