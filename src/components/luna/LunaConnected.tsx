@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRoomContext } from "@livekit/components-react";
 import { RoomEvent } from "livekit-client";
 import { AnimatePresence, motion } from "framer-motion";
@@ -21,6 +21,7 @@ interface ActiveTaskState {
 
 export function LunaConnected() {
   const { connectionState } = useLunaRuntime();
+  const containerRef = useRef<HTMLDivElement>(null);
   const room = useRoomContext();
   const { agentState, agentMicTrack, userMicTrack } = useGlobalAgentState();
   const [showTranscript, setShowTranscript] = useState(false);
@@ -97,7 +98,10 @@ export function LunaConnected() {
 
   return (
     <div className="flex h-[calc(100vh-40px)]">
-      <section className={`flex flex-col bg-[#0a0a0a] transition-all duration-200 relative ${showTranscript ? "w-3/5" : "w-full"}`}>
+      <section 
+        ref={containerRef}
+        className={`flex flex-col bg-[#0a0a0a] transition-all duration-200 relative ${showTranscript ? "w-3/5" : "w-full"}`}
+      >
         <div className="px-6 pb-2 pt-4">
           <div className="inline-flex rounded-xl border border-white/10 bg-[#141417] p-1">
             <button
@@ -147,10 +151,14 @@ export function LunaConnected() {
         <AnimatePresence>
           {activeTask && !isDismissed && (
             <motion.div
+              drag
+              dragConstraints={containerRef}
+              dragElastic={0.1}
+              dragMomentum={false}
               initial={{ opacity: 0, y: 30, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 20, scale: 0.95 }}
-              className="absolute bottom-6 right-6 w-96 z-20 bg-zinc-950/85 backdrop-blur-lg border border-zinc-800 rounded-xl p-4 shadow-2xl text-zinc-100 flex flex-col gap-3 font-sans text-sm select-none"
+              className="absolute bottom-6 right-6 w-96 z-20 bg-zinc-950/85 backdrop-blur-lg border border-zinc-800 rounded-xl p-4 shadow-2xl text-zinc-100 flex flex-col gap-3 font-sans text-sm select-none cursor-grab active:cursor-grabbing"
             >
               {/* Header */}
               <div className="flex items-center justify-between border-b border-zinc-800 pb-2">

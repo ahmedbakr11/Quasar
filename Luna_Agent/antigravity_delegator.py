@@ -15,17 +15,49 @@ class AntigravityDelegator(llm.Toolset):
         super().__init__(id="antigravity_delegator")
         self._get_session = get_session
         self._get_room = get_room
+        self._last_task = None
 
     @llm.function_tool
     async def delegate_to_antigravity(
         self,
         task: Annotated[str, "Detailed description of the coding or refactoring task to perform"]
     ) -> str:
-        """Delegates a coding task to the Antigravity CLI, streams logs to the UI, 
-        and returns a verbal summary of the execution outcome once completed.
+        """Delegates a coding task to the Antigravity CLI to run in the background.
+        The task runs asynchronously, and its logs are streamed in real-time to the UI page.
         """
-        # Run task and wait for it to finish (or timeout)
-        return await self._run_task_and_get_summary(task)
+        self._last_task = {
+            "task": task,
+            "status": "running",
+            "start_time": time.time(),
+            "output": None,
+            "error": None
+        }
+        
+        # Dispatch background runner
+        asyncio.create_task(self._run_task_background(task))
+        
+        return f"I have successfully started the Antigravity task in the background: '{task}'. You can monitor the real-time logs and progress on the Mesh page."
+
+    @llm.function_tool
+    async def get_antigravity_task_status(self) -> str:
+        """Retrieves the status, console logs, and result summary of the most recently delegated Antigravity task."""
+        if not self._last_task:
+            return "No tasks have been delegated to Antigravity in this session yet."
+            
+        task_name = self._last_task.get("task")
+        status = self._last_task.get("status")
+        
+        if status == "running":
+            elapsed = int(time.time() - self._last_task.get("start_time", time.time()))
+            return f"The task '{task_name}' is currently running in the background. Elapsed time: {elapsed} seconds."
+            
+        elif status == "success":
+            output = self._last_task.get("output", "")
+            return f"The task '{task_name}' completed successfully. Output summary: {output[:1000]}"
+            
+        else:
+            error = self._last_task.get("error", "")
+            return f"The task '{task_name}' failed. Error summary: {error[:1000]}"
 
     async def _publish_status(self, task: str, status: str, output: str = None, error: str = None):
         room_obj = self._get_room()
@@ -61,7 +93,7 @@ class AntigravityDelegator(llm.Toolset):
             except Exception:
                 pass
 
-    async def _run_task_and_get_summary(self, task: str) -> str:
+    async def _run_task_background(self, task: str):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # Self-healing binary path resolution for Windows
@@ -74,7 +106,6 @@ class AntigravityDelegator(llm.Toolset):
                     agy_cmd = candidate
                     print(f"[Antigravity CLI] Found agy executable at: {agy_cmd}")
                 else:
-                    # Fallback user home directory check
                     user_profile = os.environ.get("USERPROFILE", "")
                     if user_profile:
                         candidate_home = os.path.join(user_profile, ".antigravity", "bin", "agy.exe")
@@ -82,16 +113,16 @@ class AntigravityDelegator(llm.Toolset):
                             agy_cmd = candidate_home
                             print(f"[Antigravity CLI] Found agy executable at: {agy_cmd}")
 
-        # If we still can't find it, notify user directly
         if agy_cmd == "agy" and not shutil.which("agy"):
             err_msg = "Antigravity CLI ('agy') is not installed or not found in system PATH."
             print(f"\033[1;31m[Antigravity CLI] Error: {err_msg}\033[0m")
+            if self._last_task:
+                self._last_task["status"] = "error"
+                self._last_task["error"] = err_msg
             await self._publish_status(task, "error", error=err_msg)
-            return f"Error: I could not locate the Antigravity CLI ('agy') on your machine. Please make sure it is installed and in your environment PATH."
+            return
 
-        # Escape double quotes for shell execution
         escaped_task = task.replace('"', '\\"')
-        # Wrap custom path in quotes if it contains spaces
         executable = f'"{agy_cmd}"' if " " in agy_cmd else agy_cmd
         command = f'{executable} -p "{escaped_task}" --dangerously-skip-permissions'
         
@@ -103,7 +134,6 @@ class AntigravityDelegator(llm.Toolset):
         await self._publish_status(task, "running")
         
         try:
-            # Spawn process
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
@@ -111,7 +141,6 @@ class AntigravityDelegator(llm.Toolset):
                 cwd=repo_root
             )
             
-            # Helper to stream stdout/stderr
             async def read_stream(stream, name, is_error=False):
                 logs = []
                 color = "\033[31m" if is_error else "\033[36m"
@@ -122,10 +151,7 @@ class AntigravityDelegator(llm.Toolset):
                     if not line:
                         break
                     decoded_line = line.decode('utf-8', errors='ignore').rstrip()
-                    # Print to terminal with ANSI colors
                     print(f"{color}{prefix} {decoded_line}\033[0m")
-                    
-                    # Stream log log line to UI
                     await self._publish_log(task, decoded_line)
                     logs.append(decoded_line)
                 return "\n".join(logs)
@@ -136,7 +162,6 @@ class AntigravityDelegator(llm.Toolset):
                 stdout_task = asyncio.create_task(read_stream(process.stdout, "stdout"))
                 stderr_task = asyncio.create_task(read_stream(process.stderr, "stderr", is_error=True))
                 
-                # Wait for the process to exit with timeout
                 await asyncio.wait_for(process.wait(), timeout=TIMEOUT)
                 
                 stdout_content = await stdout_task
@@ -160,12 +185,14 @@ class AntigravityDelegator(llm.Toolset):
             status = "success" if exit_code == 0 else "error"
             if exit_code == 0:
                 print("\033[1;32m[Antigravity CLI] Task Completed Successfully\033[0m\n")
-                summary = f"The task '{task}' has been successfully completed by the Antigravity agent."
             else:
                 print(f"\033[1;31m[Antigravity CLI] Task Failed (Exit Code: {exit_code})\033[0m\n")
-                summary = f"The task '{task}' failed during execution with exit code {exit_code}. The error logs say: {stderr_content[:200]}"
-            
-            # Send final status update to UI
+                
+            if self._last_task:
+                self._last_task["status"] = status
+                self._last_task["output"] = stdout_content
+                self._last_task["error"] = stderr_content
+
             await self._publish_status(
                 task, 
                 status, 
@@ -173,11 +200,10 @@ class AntigravityDelegator(llm.Toolset):
                 error=stderr_content[:2000] if exit_code != 0 else None
             )
             
-            # Return result summary back to Gemini model to speak verbally
-            return summary
-            
         except Exception as e:
             err_msg = f"Failed to execute Antigravity CLI: {str(e)}"
             print(f"\n\033[1;31m[Antigravity CLI] Exception: {err_msg}\033[0m\n")
+            if self._last_task:
+                self._last_task["status"] = "error"
+                self._last_task["error"] = err_msg
             await self._publish_status(task, "error", error=err_msg)
-            return f"An exception occurred while trying to run the Antigravity agent: {str(e)}"
