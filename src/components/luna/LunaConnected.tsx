@@ -25,9 +25,10 @@ interface TaskWidgetProps {
   containerRef: React.RefObject<HTMLDivElement>;
   index: number;
   onDismiss: () => void;
+  onKill: (taskId: string) => void;
 }
 
-function TaskWidget({ task, containerRef, index, onDismiss }: TaskWidgetProps) {
+function TaskWidget({ task, containerRef, index, onDismiss, onKill }: TaskWidgetProps) {
   const consoleRef = useRef<HTMLDivElement>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -141,14 +142,28 @@ function TaskWidget({ task, containerRef, index, onDismiss }: TaskWidgetProps) {
           </span>
           <div 
             ref={consoleRef}
-            className="bg-black/95 rounded-xl p-3 font-mono text-[10px] text-zinc-300 h-32 overflow-y-auto border border-white/5 flex flex-col gap-1.5 leading-relaxed"
+            className="bg-black/95 rounded-xl p-3 font-mono text-[10px] text-zinc-300 h-40 overflow-y-auto border border-white/5 flex flex-col gap-1.5 leading-relaxed shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
           >
-            {task.logs.map((log, index) => (
-              <div key={index} className="break-all whitespace-pre-wrap">
-                <span className="text-indigo-400/85 mr-1.5 font-sans font-bold select-none">$</span>
-                {log}
-              </div>
-            ))}
+            {task.logs.map((log, index) => {
+              // Custom coloring for different log types to improve aesthetics
+              let logColor = "text-zinc-300";
+              if (log.includes("[error]") || log.includes("Error:") || log.includes("FAILED")) {
+                logColor = "text-red-400 font-medium";
+              } else if (log.includes("[success]") || log.includes("SUCCESS") || log.includes("Completed")) {
+                logColor = "text-emerald-400 font-medium";
+              } else if (log.includes("Thinking...") || log.includes("[thinking]")) {
+                logColor = "text-indigo-400 italic animate-pulse";
+              } else if (log.includes("[warning]")) {
+                logColor = "text-amber-400";
+              }
+              
+              return (
+                <div key={index} className={`break-all whitespace-pre-wrap ${logColor}`}>
+                  <span className="text-indigo-500/70 mr-1.5 font-sans font-bold select-none">$</span>
+                  {log}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -170,6 +185,17 @@ function TaskWidget({ task, containerRef, index, onDismiss }: TaskWidgetProps) {
           </div>
         </div>
       )}
+
+      {/* Terminate/Kill Subprocess Switch */}
+      {task.status === "running" && (
+        <button
+          onClick={() => onKill(task.id)}
+          className="mt-1 w-full bg-red-500/10 hover:bg-red-500/20 active:bg-red-500/30 text-red-400 hover:text-red-300 font-semibold py-2 px-3 rounded-xl border border-red-500/20 hover:border-red-500/35 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg hover:shadow-red-500/5"
+        >
+          <XCircle className="h-3.5 w-3.5" />
+          <span>Terminate Task</span>
+        </button>
+      )}
     </motion.div>
   );
 }
@@ -185,6 +211,20 @@ export function LunaConnected() {
   const [dismissedTasks, setDismissedTasks] = useState<Record<string, boolean>>({});
 
   const visualState = connectionState === "connected" ? agentState : "idle";
+
+  const handleKillTask = async (taskId: string) => {
+    if (!room) return;
+    const payload = JSON.stringify({
+      type: "antigravity_kill_task",
+      task_id: taskId,
+    });
+    const bytes = new TextEncoder().encode(payload);
+    try {
+      await room.localParticipant.publishData(bytes, { reliable: true });
+    } catch (e) {
+      console.error("Failed to publish kill task data packet:", e);
+    }
+  };
 
   // Monitor LiveKit data channel messages for multiple task streams
   useEffect(() => {
@@ -314,6 +354,7 @@ export function LunaConnected() {
                 containerRef={containerRef}
                 index={index}
                 onDismiss={() => setDismissedTasks((prev) => ({ ...prev, [task.id]: true }))}
+                onKill={handleKillTask}
               />
             ))
           }

@@ -1057,6 +1057,19 @@ async def entrypoint(ctx: JobContext):
     def _get_room() -> Any:
         return getattr(ctx, "room", None)
 
+    delegator_instance = AntigravityDelegator(_get_session, _get_room)
+
+    @ctx.room.on("data_received")
+    def on_data_received(data_packet):
+        try:
+            payload = json.loads(data_packet.data.decode('utf-8'))
+            if payload.get("type") == "antigravity_kill_task":
+                task_id = payload.get("task_id")
+                if task_id:
+                    delegator_instance.kill_task(task_id)
+        except Exception as e:
+            print(f"Error handling room data_received event: {e}")
+
     # Use an explicit realtime model from env when provided.
     # Otherwise let the LiveKit plugin choose its API-appropriate default.
     selected_model = os.getenv("GEMINI_REALTIME_MODEL")
@@ -1145,7 +1158,7 @@ async def entrypoint(ctx: JobContext):
                 NoteTools(_resolve_livekit_username),
                 WebSearchTools(),
                 DelegationTools(),
-                AntigravityDelegator(_get_session, _get_room),
+                delegator_instance,
                 *extra_tools,
             ],
         )

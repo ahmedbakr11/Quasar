@@ -66,6 +66,18 @@ class AntigravityDelegator(llm.Toolset):
             error = last_task.get("error", "")
             return f"The task '{task_name}' failed. Error summary: {error[:1000]}"
 
+    def kill_task(self, task_id: str):
+        """Kills the active Antigravity subprocess for the given task ID."""
+        if task_id in self._active_tasks:
+            task_info = self._active_tasks[task_id]
+            process = task_info.get("process")
+            if process and task_info.get("status") == "running":
+                print(f"[Antigravity CLI] Terminating task {task_id} on user request")
+                try:
+                    process.kill()
+                except Exception as kill_err:
+                    print(f"Error terminating process via kill switch: {kill_err}")
+
     async def _publish_status(self, task_id: str, task: str, status: str, output: str = None, error: str = None):
         room_obj = self._get_room()
         if room_obj and hasattr(room_obj, "local_participant") and room_obj.local_participant:
@@ -150,19 +162,56 @@ class AntigravityDelegator(llm.Toolset):
                 cwd=repo_root
             )
             
+            if task_id in self._active_tasks:
+                self._active_tasks[task_id]["process"] = process
+            
             async def read_stream(stream, name, is_error=False):
                 logs = []
                 color = "\033[31m" if is_error else "\033[36m"
                 prefix = f"[Antigravity CLI] [{name}]"
+                buffer = ""
                 
                 while True:
-                    line = await stream.readline()
-                    if not line:
+                    chunk = await stream.read(1024)
+                    if not chunk:
                         break
-                    decoded_line = line.decode('utf-8', errors='ignore').rstrip()
-                    print(f"{color}{prefix} {decoded_line}\033[0m")
-                    await self._publish_log(task_id, task, decoded_line)
-                    logs.append(decoded_line)
+                    
+                    decoded = chunk.decode('utf-8', errors='ignore')
+                    buffer += decoded
+                    
+                    while True:
+                        idx_r = buffer.find('\r')
+                        idx_n = buffer.find('\n')
+                        
+                        if idx_r == -1 and idx_n == -1:
+                            break
+                            
+                        if idx_r != -1 and idx_n != -1:
+                            idx = min(idx_r, idx_n)
+                        elif idx_r != -1:
+                            idx = idx_r
+                        else:
+                            idx = idx_n
+                            
+                        line = buffer[:idx]
+                        sep_len = 1
+                        if buffer[idx] == '\r' and idx + 1 < len(buffer) and buffer[idx+1] == '\n':
+                            sep_len = 2
+                            
+                        buffer = buffer[idx + sep_len:]
+                        stripped = line.strip()
+                        if stripped:
+                            print(f"{color}{prefix} {stripped}\033[0m")
+                            await self._publish_log(task_id, task, stripped)
+                            logs.append(stripped)
+                            
+                if buffer:
+                    stripped = buffer.strip()
+                    if stripped:
+                        print(f"{color}{prefix} {stripped}\033[0m")
+                        await self._publish_log(task_id, task, stripped)
+                        logs.append(stripped)
+                        
                 return "\n".join(logs)
 
             TIMEOUT = 600 # 10 minutes
