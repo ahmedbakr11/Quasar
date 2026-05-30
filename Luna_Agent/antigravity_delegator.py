@@ -103,13 +103,17 @@ class AntigravityDelegator(llm.Toolset):
             "error": error,
             "timestamp": time.time()
         }
-        try:
-            await room_obj.local_participant.publish_data(
-                json.dumps(payload).encode('utf-8'),
-                reliable=True
-            )
-        except Exception as pe:
-            print(f"[Antigravity CLI] Failed to publish task status to data channel: {pe}")
+        
+        async def do_publish_status():
+            try:
+                await room_obj.local_participant.publish_data(
+                    json.dumps(payload).encode('utf-8'),
+                    reliable=True
+                )
+            except Exception as pe:
+                print(f"[Antigravity CLI] Failed to publish task status to data channel: {pe}")
+                
+        asyncio.create_task(do_publish_status())
 
     async def _publish_log(self, task_id: str, task: str, log_line: str):
         room_obj = self._get_room()
@@ -127,13 +131,17 @@ class AntigravityDelegator(llm.Toolset):
             "log": log_line,
             "timestamp": time.time()
         }
-        try:
-            await room_obj.local_participant.publish_data(
-                json.dumps(payload).encode('utf-8'),
-                reliable=True
-            )
-        except Exception as pe:
-            print(f"[Antigravity CLI] Failed to publish log line to data channel: {pe}")
+        
+        async def do_publish_log():
+            try:
+                await room_obj.local_participant.publish_data(
+                    json.dumps(payload).encode('utf-8'),
+                    reliable=True
+                )
+            except Exception as pe:
+                print(f"[Antigravity CLI] Failed to publish log line to data channel: {pe}")
+                
+        asyncio.create_task(do_publish_log())
 
     async def _run_task_background(self, task_id: str, task: str):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -190,13 +198,16 @@ class AntigravityDelegator(llm.Toolset):
                 logs = []
                 color = "\033[31m" if is_error else "\033[36m"
                 prefix = f"[Antigravity CLI] [{name}]"
+                print(f"{color}{prefix} Reader started. Waiting for process output...\033[0m")
                 buffer = ""
                 
                 while True:
                     chunk = await stream.read(1024)
                     if not chunk:
+                        print(f"{color}{prefix} Reader reached EOF.\033[0m")
                         break
                     
+                    print(f"{color}{prefix} Read chunk of {len(chunk)} bytes.\033[0m")
                     decoded = chunk.decode('utf-8', errors='ignore')
                     buffer += decoded
                     
@@ -222,7 +233,7 @@ class AntigravityDelegator(llm.Toolset):
                         buffer = buffer[idx + sep_len:]
                         stripped = line.strip()
                         if stripped:
-                            print(f"{color}{prefix} {stripped}\033[0m")
+                            print(f"{color}{prefix} Line: {stripped}\033[0m")
                             await self._publish_log(task_id, task, stripped)
                             logs.append(stripped)
                             await asyncio.sleep(0.02)
@@ -230,7 +241,7 @@ class AntigravityDelegator(llm.Toolset):
                 if buffer:
                     stripped = buffer.strip()
                     if stripped:
-                        print(f"{color}{prefix} {stripped}\033[0m")
+                        print(f"{color}{prefix} Line (EOF): {stripped}\033[0m")
                         await self._publish_log(task_id, task, stripped)
                         logs.append(stripped)
                         await asyncio.sleep(0.02)
