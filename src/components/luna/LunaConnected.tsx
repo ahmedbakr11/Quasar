@@ -70,7 +70,7 @@ export function LunaConnected() {
             };
           });
         }
-      } catch (e) {
+      } catch {
         // Non-JSON or other event payload
       }
     };
@@ -84,7 +84,6 @@ export function LunaConnected() {
   // Handle 10-minute (600s) timeout counting
   useEffect(() => {
     if (!activeTask || activeTask.status !== "running") {
-      setElapsed(0);
       return;
     }
 
@@ -93,7 +92,10 @@ export function LunaConnected() {
       setElapsed(Math.min(sec, 600));
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      setElapsed(0);
+    };
   }, [activeTask]);
 
   return (
