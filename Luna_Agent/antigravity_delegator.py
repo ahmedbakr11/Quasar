@@ -87,39 +87,53 @@ class AntigravityDelegator(llm.Toolset):
 
     async def _publish_status(self, task_id: str, task: str, status: str, output: str = None, error: str = None):
         room_obj = self._get_room()
-        if room_obj and hasattr(room_obj, "local_participant") and room_obj.local_participant:
-            payload = {
-                "type": "antigravity_task_status",
-                "task_id": task_id,
-                "task": task,
-                "status": status,
-                "output": output,
-                "error": error,
-                "timestamp": time.time()
-            }
-            try:
-                await room_obj.local_participant.publish_data(
-                    json.dumps(payload).encode('utf-8')
-                )
-            except Exception as pe:
-                print(f"Failed to publish task status to data channel: {pe}")
+        if not room_obj:
+            print("[Antigravity CLI] Cannot publish status: room is None")
+            return
+        if not hasattr(room_obj, "local_participant") or not room_obj.local_participant:
+            print("[Antigravity CLI] Cannot publish status: local_participant is None or missing")
+            return
+
+        payload = {
+            "type": "antigravity_task_status",
+            "task_id": task_id,
+            "task": task,
+            "status": status,
+            "output": output,
+            "error": error,
+            "timestamp": time.time()
+        }
+        try:
+            await room_obj.local_participant.publish_data(
+                json.dumps(payload).encode('utf-8'),
+                reliable=True
+            )
+        except Exception as pe:
+            print(f"[Antigravity CLI] Failed to publish task status to data channel: {pe}")
 
     async def _publish_log(self, task_id: str, task: str, log_line: str):
         room_obj = self._get_room()
-        if room_obj and hasattr(room_obj, "local_participant") and room_obj.local_participant:
-            payload = {
-                "type": "antigravity_task_log",
-                "task_id": task_id,
-                "task": task,
-                "log": log_line,
-                "timestamp": time.time()
-            }
-            try:
-                await room_obj.local_participant.publish_data(
-                    json.dumps(payload).encode('utf-8')
-                )
-            except Exception as pe:
-                print(f"[Antigravity CLI] Failed to publish log line to data channel: {pe}")
+        if not room_obj:
+            print("[Antigravity CLI] Cannot publish log line: room is None")
+            return
+        if not hasattr(room_obj, "local_participant") or not room_obj.local_participant:
+            print("[Antigravity CLI] Cannot publish log line: local_participant is None or missing")
+            return
+
+        payload = {
+            "type": "antigravity_task_log",
+            "task_id": task_id,
+            "task": task,
+            "log": log_line,
+            "timestamp": time.time()
+        }
+        try:
+            await room_obj.local_participant.publish_data(
+                json.dumps(payload).encode('utf-8'),
+                reliable=True
+            )
+        except Exception as pe:
+            print(f"[Antigravity CLI] Failed to publish log line to data channel: {pe}")
 
     async def _run_task_background(self, task_id: str, task: str):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -211,6 +225,7 @@ class AntigravityDelegator(llm.Toolset):
                             print(f"{color}{prefix} {stripped}\033[0m")
                             await self._publish_log(task_id, task, stripped)
                             logs.append(stripped)
+                            await asyncio.sleep(0.02)
                             
                 if buffer:
                     stripped = buffer.strip()
@@ -218,6 +233,7 @@ class AntigravityDelegator(llm.Toolset):
                         print(f"{color}{prefix} {stripped}\033[0m")
                         await self._publish_log(task_id, task, stripped)
                         logs.append(stripped)
+                        await asyncio.sleep(0.02)
                         
                 return "\n".join(logs)
 
