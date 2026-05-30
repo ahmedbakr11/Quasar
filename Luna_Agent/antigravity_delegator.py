@@ -3,6 +3,7 @@ import json
 import asyncio
 import time
 import shutil
+import uuid
 from typing import Annotated, Callable, Any
 from livekit.agents import llm, AgentSession
 
@@ -15,7 +16,8 @@ class AntigravityDelegator(llm.Toolset):
         super().__init__(id="antigravity_delegator")
         self._get_session = get_session
         self._get_room = get_room
-        self._last_task = None
+        self._active_tasks = {}
+        self._last_task_id = None
 
     @llm.function_tool
     async def delegate_to_antigravity(
@@ -25,7 +27,11 @@ class AntigravityDelegator(llm.Toolset):
         """Delegates a coding task to the Antigravity CLI to run in the background.
         The task runs asynchronously, and its logs are streamed in real-time to the UI page.
         """
-        self._last_task = {
+        task_id = str(uuid.uuid4())
+        self._last_task_id = task_id
+        
+        self._active_tasks[task_id] = {
+            "id": task_id,
             "task": task,
             "status": "running",
             "start_time": time.time(),
@@ -33,37 +39,39 @@ class AntigravityDelegator(llm.Toolset):
             "error": None
         }
         
-        # Dispatch background runner
-        asyncio.create_task(self._run_task_background(task))
+        # Dispatch background runner with task ID
+        asyncio.create_task(self._run_task_background(task_id, task))
         
         return f"I have successfully started the Antigravity task in the background: '{task}'. You can monitor the real-time logs and progress on the Mesh page."
 
     @llm.function_tool
     async def get_antigravity_task_status(self) -> str:
         """Retrieves the status, console logs, and result summary of the most recently delegated Antigravity task."""
-        if not self._last_task:
+        if not self._last_task_id or self._last_task_id not in self._active_tasks:
             return "No tasks have been delegated to Antigravity in this session yet."
             
-        task_name = self._last_task.get("task")
-        status = self._last_task.get("status")
+        last_task = self._active_tasks[self._last_task_id]
+        task_name = last_task.get("task")
+        status = last_task.get("status")
         
         if status == "running":
-            elapsed = int(time.time() - self._last_task.get("start_time", time.time()))
+            elapsed = int(time.time() - last_task.get("start_time", time.time()))
             return f"The task '{task_name}' is currently running in the background. Elapsed time: {elapsed} seconds."
             
         elif status == "success":
-            output = self._last_task.get("output", "")
+            output = last_task.get("output", "")
             return f"The task '{task_name}' completed successfully. Output summary: {output[:1000]}"
             
         else:
-            error = self._last_task.get("error", "")
+            error = last_task.get("error", "")
             return f"The task '{task_name}' failed. Error summary: {error[:1000]}"
 
-    async def _publish_status(self, task: str, status: str, output: str = None, error: str = None):
+    async def _publish_status(self, task_id: str, task: str, status: str, output: str = None, error: str = None):
         room_obj = self._get_room()
         if room_obj and hasattr(room_obj, "local_participant") and room_obj.local_participant:
             payload = {
                 "type": "antigravity_task_status",
+                "task_id": task_id,
                 "task": task,
                 "status": status,
                 "output": output,
@@ -77,11 +85,12 @@ class AntigravityDelegator(llm.Toolset):
             except Exception as pe:
                 print(f"Failed to publish task status to data channel: {pe}")
 
-    async def _publish_log(self, task: str, log_line: str):
+    async def _publish_log(self, task_id: str, task: str, log_line: str):
         room_obj = self._get_room()
         if room_obj and hasattr(room_obj, "local_participant") and room_obj.local_participant:
             payload = {
                 "type": "antigravity_task_log",
+                "task_id": task_id,
                 "task": task,
                 "log": log_line,
                 "timestamp": time.time()
@@ -93,7 +102,7 @@ class AntigravityDelegator(llm.Toolset):
             except Exception:
                 pass
 
-    async def _run_task_background(self, task: str):
+    async def _run_task_background(self, task_id: str, task: str):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # Self-healing binary path resolution for Windows
@@ -116,10 +125,10 @@ class AntigravityDelegator(llm.Toolset):
         if agy_cmd == "agy" and not shutil.which("agy"):
             err_msg = "Antigravity CLI ('agy') is not installed or not found in system PATH."
             print(f"\033[1;31m[Antigravity CLI] Error: {err_msg}\033[0m")
-            if self._last_task:
-                self._last_task["status"] = "error"
-                self._last_task["error"] = err_msg
-            await self._publish_status(task, "error", error=err_msg)
+            if task_id in self._active_tasks:
+                self._active_tasks[task_id]["status"] = "error"
+                self._active_tasks[task_id]["error"] = err_msg
+            await self._publish_status(task_id, task, "error", error=err_msg)
             return
 
         escaped_task = task.replace('"', '\\"')
@@ -131,7 +140,7 @@ class AntigravityDelegator(llm.Toolset):
         print(f"\033[1;35m[Antigravity CLI] Command: {command}\033[0m")
         print(f"\033[1;35m[Antigravity CLI] ==========================================\033[0m\n")
         
-        await self._publish_status(task, "running")
+        await self._publish_status(task_id, task, "running")
         
         try:
             process = await asyncio.create_subprocess_shell(
@@ -152,7 +161,7 @@ class AntigravityDelegator(llm.Toolset):
                         break
                     decoded_line = line.decode('utf-8', errors='ignore').rstrip()
                     print(f"{color}{prefix} {decoded_line}\033[0m")
-                    await self._publish_log(task, decoded_line)
+                    await self._publish_log(task_id, task, decoded_line)
                     logs.append(decoded_line)
                 return "\n".join(logs)
 
@@ -188,12 +197,13 @@ class AntigravityDelegator(llm.Toolset):
             else:
                 print(f"\033[1;31m[Antigravity CLI] Task Failed (Exit Code: {exit_code})\033[0m\n")
                 
-            if self._last_task:
-                self._last_task["status"] = status
-                self._last_task["output"] = stdout_content
-                self._last_task["error"] = stderr_content
+            if task_id in self._active_tasks:
+                self._active_tasks[task_id]["status"] = status
+                self._active_tasks[task_id]["output"] = stdout_content
+                self._active_tasks[task_id]["error"] = stderr_content
 
             await self._publish_status(
+                task_id,
                 task, 
                 status, 
                 output=stdout_content[:2000] if exit_code == 0 else None, 
@@ -203,7 +213,7 @@ class AntigravityDelegator(llm.Toolset):
         except Exception as e:
             err_msg = f"Failed to execute Antigravity CLI: {str(e)}"
             print(f"\n\033[1;31m[Antigravity CLI] Exception: {err_msg}\033[0m\n")
-            if self._last_task:
-                self._last_task["status"] = "error"
-                self._last_task["error"] = err_msg
-            await self._publish_status(task, "error", error=err_msg)
+            if task_id in self._active_tasks:
+                self._active_tasks[task_id]["status"] = "error"
+                self._active_tasks[task_id]["error"] = err_msg
+            await self._publish_status(task_id, task, "error", error=err_msg)
