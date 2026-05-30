@@ -145,7 +145,7 @@ class AntigravityDelegator(llm.Toolset):
             if session:
                 chat_msg = llm.ChatMessage(
                     role="system",
-                    content=f"Background task update: {report}. Tell the user the task is finished."
+                    content=[f"Background task update: {report}. Tell the user the task is finished."]
                 )
                 session.generate_reply(user_input=chat_msg)
             
@@ -165,7 +165,7 @@ class AntigravityDelegator(llm.Toolset):
                 session.generate_reply(
                     user_input=llm.ChatMessage(
                         role="system",
-                        content=f"Notify the user that running Antigravity failed with error: {str(e)}"
+                        content=[f"Notify the user that running Antigravity failed with error: {str(e)}"]
                     )
                 )
             await self._publish_status(task, "error", error=err_msg)
