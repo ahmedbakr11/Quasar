@@ -1,7 +1,9 @@
 import { format } from "date-fns";
 import {
+  CalendarDays,
   ChevronDown,
   ChevronUp,
+  CloudSun,
   Loader2,
   Play,
   Pause,
@@ -12,9 +14,10 @@ import {
   MessageSquare,
   ArrowUpRight,
   Check,
-  AlarmClock
+  AlarmClock,
+  GripHorizontal
 } from "lucide-react";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { UserAvatar } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
@@ -38,7 +41,7 @@ const getGreeting = (name: string) => {
 // 1. User Profile Card
 function UserProfileCard({ user }: { user: UserProfile }) {
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-[#141417] to-[#111111] p-6 shadow-md h-[260px] relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300">
+    <div className="flex h-full min-h-[240px] flex-col justify-between rounded-2xl border border-white/10 bg-gradient-to-br from-[#141417] to-[#111111] p-6 shadow-md relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300">
       <div className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none group-hover:bg-indigo-500/20 transition-all duration-500" />
       
       <div className="flex items-start gap-4">
@@ -200,7 +203,7 @@ function StopwatchCard() {
   };
 
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300">
+    <div className="flex h-full min-h-[240px] flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300">
       <AnimatePresence mode="wait" initial={false}>
         {mode === "stopwatch" ? (
           <motion.div
@@ -399,11 +402,11 @@ function PriorityChartCard({ tasks }: { tasks: Task[] }) {
   const low = tasks.filter((t) => t.priority === "low").length;
   const total = high + medium + low;
 
-  const maxVal = Math.max(high, medium, low, 1);
-  const getPercent = (val: number) => val === 0 ? 0 : Math.max(10, Math.min(100, (val / maxVal) * 100));
+  const barCapacity = Math.max(total, 5);
+  const getPercent = (val: number) => (val === 0 ? 0 : Math.max(8, Math.min(100, (val / barCapacity) * 100)));
 
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] hover:border-indigo-500/30 transition-all duration-300">
+    <div className="flex h-full min-h-[240px] flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md hover:border-indigo-500/30 transition-all duration-300">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400 font-medium">Task Analysis</span>
         <span className="text-[10px] text-zinc-500">{total} analyzed</span>
@@ -416,7 +419,7 @@ function PriorityChartCard({ tasks }: { tasks: Task[] }) {
               style={{ height: `${getPercent(low)}%` }}
               className="w-full bg-blue-500/60 group-hover:bg-blue-500 transition-all duration-300 rounded-b-lg"
             />
-            <div className="absolute top-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900 border border-white/10 text-[10px] text-zinc-100 px-1 rounded shadow-md z-10">
+            <div className="absolute top-1 left-1/2 -translate-x-1/2 bg-zinc-900/90 border border-white/10 text-[10px] text-zinc-100 px-1 rounded shadow-md z-10">
               {low}
             </div>
           </div>
@@ -429,7 +432,7 @@ function PriorityChartCard({ tasks }: { tasks: Task[] }) {
               style={{ height: `${getPercent(medium)}%` }}
               className="w-full bg-amber-500/60 group-hover:bg-amber-500 transition-all duration-300 rounded-b-lg"
             />
-            <div className="absolute top-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900 border border-white/10 text-[10px] text-zinc-100 px-1 rounded shadow-md z-10">
+            <div className="absolute top-1 left-1/2 -translate-x-1/2 bg-zinc-900/90 border border-white/10 text-[10px] text-zinc-100 px-1 rounded shadow-md z-10">
               {medium}
             </div>
           </div>
@@ -442,7 +445,7 @@ function PriorityChartCard({ tasks }: { tasks: Task[] }) {
               style={{ height: `${getPercent(high)}%` }}
               className="w-full bg-red-500/60 group-hover:bg-red-500 transition-all duration-300 rounded-b-lg"
             />
-            <div className="absolute top-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900 border border-white/10 text-[10px] text-zinc-100 px-1 rounded shadow-md z-10">
+            <div className="absolute top-1 left-1/2 -translate-x-1/2 bg-zinc-900/90 border border-white/10 text-[10px] text-zinc-100 px-1 rounded shadow-md z-10">
               {high}
             </div>
           </div>
@@ -456,7 +459,7 @@ function PriorityChartCard({ tasks }: { tasks: Task[] }) {
 // 4. Task Timeline Card (Calendar Placeholder)
 function TaskTimelineCard() {
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] md:col-span-2 hover:border-indigo-500/30 transition-all duration-300 overflow-hidden">
+    <div className="flex h-full min-h-[240px] flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md hover:border-indigo-500/30 transition-all duration-300 overflow-hidden">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">Task Timeline</span>
         <span className="text-[10px] text-zinc-500">September 2026</span>
@@ -516,7 +519,7 @@ function LunaAgentBlock() {
   };
 
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300">
+    <div className="flex h-full min-h-[240px] flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300">
       {isConnected && visualState === "listening" && (
         <div
           style={{
@@ -608,7 +611,7 @@ function SystemStatsCard() {
   };
 
   return (
-    <div className="flex flex-col rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] overflow-y-auto hover:border-indigo-500/30 transition-all duration-300 scrollbar-none">
+    <div className="flex h-full min-h-[240px] flex-col rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md overflow-y-auto hover:border-indigo-500/30 transition-all duration-300 scrollbar-none">
       <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400 mb-3">System Diagnostics</span>
       
       <div className="flex flex-col gap-2">
@@ -678,7 +681,10 @@ function RecentTasksCard({
     patch: Partial<Pick<Task, "title" | "description" | "dueDate" | "priority" | "status" | "colorToken">>
   ) => Promise<void>;
 }) {
-  const pendingTasks = tasks.filter((t) => t.status !== "done").slice(0, 3);
+  const pendingTasks = tasks
+    .filter((t) => t.status !== "done")
+    .sort((a, b) => new Date(b.createdAt || b.updatedAt).getTime() - new Date(a.createdAt || a.updatedAt).getTime())
+    .slice(0, 5);
 
   const toggleTaskCompletion = async (taskId: string) => {
     await updateTask(sessionToken, taskId, { status: "done" });
@@ -696,7 +702,7 @@ function RecentTasksCard({
   };
 
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] hover:border-indigo-500/30 transition-all duration-300">
+    <div className="flex h-full min-h-[240px] flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md hover:border-indigo-500/30 transition-all duration-300">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">Recent Tasks</span>
         <Link to="/tasks" className="text-[10px] text-zinc-500 hover:text-indigo-300 flex items-center gap-0.5">
@@ -705,7 +711,7 @@ function RecentTasksCard({
         </Link>
       </div>
 
-      <div className="flex-1 my-3 flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-none justify-center">
+      <div className="flex-1 mt-3 flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-none">
         {pendingTasks.length > 0 ? (
           pendingTasks.map((task) => (
             <div
@@ -733,8 +739,7 @@ function RecentTasksCard({
             </div>
           ))
         ) : (
-          <div className="text-center py-4 flex flex-col items-center gap-1.5">
-            <span className="text-xl">🎉</span>
+          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 py-4 text-center">
             <p className="text-[10px] text-zinc-500">All tasks completed!</p>
           </div>
         )}
@@ -748,7 +753,7 @@ function RecentNotesCard({ notes }: { notes: Note[] }) {
   const recentNotes = notes.slice(0, 3);
 
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] hover:border-indigo-500/30 transition-all duration-300">
+    <div className="flex h-full min-h-[240px] flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md hover:border-indigo-500/30 transition-all duration-300">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">Recent Notes</span>
         <Link to="/notes" className="text-[10px] text-zinc-500 hover:text-indigo-300 flex items-center gap-0.5">
@@ -782,6 +787,271 @@ function RecentNotesCard({ notes }: { notes: Note[] }) {
   );
 }
 
+type WeatherState = {
+  temperature: number | null;
+  label: string;
+  status: "loading" | "ready" | "unavailable";
+};
+
+function TimeWeatherPanel() {
+  const [now, setNow] = useState(() => new Date());
+  const [weather, setWeather] = useState<WeatherState>(() =>
+    "geolocation" in navigator
+      ? { temperature: null, label: "Local weather", status: "loading" }
+      : { temperature: null, label: "Weather unavailable", status: "unavailable" }
+  );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!("geolocation" in navigator)) return;
+
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        try {
+          const response = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${coords.latitude}&longitude=${coords.longitude}&current=temperature_2m,weather_code&temperature_unit=celsius`
+          );
+          const payload = await response.json();
+          const temperature = payload.current?.temperature_2m;
+          setWeather({
+            temperature: typeof temperature === "number" ? Math.round(temperature) : null,
+            label: getWeatherLabel(payload.current?.weather_code),
+            status: "ready"
+          });
+        } catch {
+          setWeather({ temperature: null, label: "Weather unavailable", status: "unavailable" });
+        }
+      },
+      () => setWeather({ temperature: null, label: "Weather unavailable", status: "unavailable" }),
+      { maximumAge: 1000 * 60 * 30, timeout: 4000 }
+    );
+  }, []);
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-zinc-950/50 px-4 py-3 shadow-md">
+      <div className="flex items-center gap-2 border-r border-white/10 pr-3">
+        <CalendarDays size={16} className="text-indigo-300" />
+        <div>
+          <div className="font-mono text-lg font-semibold leading-none text-zinc-100">{format(now, "h:mm a")}</div>
+          <div className="mt-1 text-[10px] font-medium text-zinc-500">{format(now, "EEEE, MMMM d, yyyy")}</div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <CloudSun size={17} className="text-amber-300" />
+        <div>
+          <div className="text-xs font-semibold text-zinc-200">
+            {weather.temperature !== null ? `${weather.temperature}C` : "--"}
+          </div>
+          <div className="mt-0.5 text-[10px] font-medium text-zinc-500">
+            {weather.status === "loading" ? "Checking weather" : weather.label}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const getWeatherLabel = (code: number | undefined) => {
+  if (code === undefined) return "Current conditions";
+  if (code === 0) return "Clear";
+  if ([1, 2, 3].includes(code)) return "Partly cloudy";
+  if ([45, 48].includes(code)) return "Fog";
+  if ([51, 53, 55, 56, 57].includes(code)) return "Drizzle";
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return "Rain";
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return "Snow";
+  if ([95, 96, 99].includes(code)) return "Thunderstorm";
+  return "Current conditions";
+};
+
+type DashboardWidgetId =
+  | "profile"
+  | "stopwatch"
+  | "priority"
+  | "timeline"
+  | "luna"
+  | "system"
+  | "tasks"
+  | "notes";
+
+type DashboardWidgetLayout = {
+  id: DashboardWidgetId;
+  w: number;
+  h: number;
+};
+
+const dashboardLayoutStorageKey = "quasar-dashboard-widget-layout-v2";
+
+const defaultWidgetLayouts: DashboardWidgetLayout[] = [
+  { id: "profile", w: 3, h: 2 },
+  { id: "stopwatch", w: 3, h: 2 },
+  { id: "priority", w: 3, h: 2 },
+  { id: "timeline", w: 6, h: 2 },
+  { id: "luna", w: 3, h: 2 },
+  { id: "system", w: 3, h: 2 },
+  { id: "tasks", w: 3, h: 2 },
+  { id: "notes", w: 3, h: 2 }
+];
+
+const dashboardWidgetIds = defaultWidgetLayouts.map((layout) => layout.id);
+
+const clampWidgetSize = (id: DashboardWidgetId, w: number, h: number): Pick<DashboardWidgetLayout, "w" | "h"> => {
+  const minW = id === "timeline" ? 4 : 2;
+  return {
+    w: Math.max(minW, Math.min(8, w)),
+    h: Math.max(2, Math.min(4, h))
+  };
+};
+
+const normalizeDashboardLayout = (layout: DashboardWidgetLayout[]): DashboardWidgetLayout[] => {
+  const seen = new Set<DashboardWidgetId>();
+  const normalized: DashboardWidgetLayout[] = [];
+
+  for (const item of layout) {
+    if (!dashboardWidgetIds.includes(item.id) || seen.has(item.id)) continue;
+    seen.add(item.id);
+    const size = clampWidgetSize(item.id, Number(item.w) || 3, Number(item.h) || 2);
+    normalized.push({ id: item.id, ...size });
+  }
+
+  for (const fallback of defaultWidgetLayouts) {
+    if (!seen.has(fallback.id)) normalized.push(fallback);
+  }
+
+  return normalized;
+};
+
+const persistDashboardLayout = (layout: DashboardWidgetLayout[]) => {
+  window.localStorage.setItem(dashboardLayoutStorageKey, JSON.stringify(layout));
+};
+
+function DashboardWidget({
+  id,
+  layout,
+  children,
+  draggingWidgetId,
+  resizingWidgetId,
+  onDragStartWidget,
+  onDragEndWidget,
+  onResizeStartWidget,
+  onResizeEndWidget,
+  onMoveWidget,
+  onResizeWidget
+}: {
+  id: DashboardWidgetId;
+  layout: DashboardWidgetLayout;
+  children: ReactNode;
+  draggingWidgetId: DashboardWidgetId | null;
+  resizingWidgetId: DashboardWidgetId | null;
+  onDragStartWidget: (id: DashboardWidgetId) => void;
+  onDragEndWidget: () => void;
+  onResizeStartWidget: (id: DashboardWidgetId) => void;
+  onResizeEndWidget: () => void;
+  onMoveWidget: (from: DashboardWidgetId, to: DashboardWidgetId) => void;
+  onResizeWidget: (id: DashboardWidgetId, w: number, h: number) => void;
+}) {
+  const isDragging = draggingWidgetId === id;
+  const isResizing = resizingWidgetId === id;
+
+  const handleDragEnter = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    const from = draggingWidgetId ?? (event.dataTransfer.getData("application/x-dashboard-widget") as DashboardWidgetId);
+    if (from && from !== id) onMoveWidget(from, id);
+  };
+
+  const handleResizeStart = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startW = layout.w;
+    const startH = layout.h;
+    const gridUnitWidth = 118;
+    const gridUnitHeight = 128;
+    onResizeStartWidget(id);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextW = startW + Math.round((moveEvent.clientX - startX) / gridUnitWidth);
+      const nextH = startH + Math.round((moveEvent.clientY - startY) / gridUnitHeight);
+      const size = clampWidgetSize(id, nextW, nextH);
+      onResizeWidget(id, size.w, size.h);
+    };
+
+    const handlePointerUp = () => {
+      onResizeEndWidget();
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+  };
+
+  return (
+    <motion.section
+      layout
+      transition={{ layout: { type: "spring", stiffness: 420, damping: 34 }, scale: { duration: 0.16 }, opacity: { duration: 0.16 } }}
+      style={{
+        gridColumn: `span ${layout.w} / span ${layout.w}`,
+        gridRow: `span ${layout.h} / span ${layout.h}`
+      }}
+      className={`group/widget relative min-h-[240px] rounded-2xl outline-none ${
+        isDragging || isResizing ? "z-30 scale-[1.015] opacity-90 shadow-2xl shadow-indigo-500/15" : "z-0"
+      }`}
+      onDragOver={(event) => event.preventDefault()}
+      onDragEnter={handleDragEnter}
+    >
+      <div
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("application/x-dashboard-widget", id);
+          onDragStartWidget(id);
+        }}
+        onDragEnd={onDragEndWidget}
+        className={`absolute left-1/2 top-2 z-20 flex h-5 -translate-x-1/2 cursor-grab items-center justify-center rounded-full border px-2 shadow-sm transition-all active:cursor-grabbing ${
+          isDragging
+            ? "border-indigo-400/50 bg-indigo-500/20 text-indigo-100 opacity-100"
+            : "border-white/10 bg-zinc-950/80 text-zinc-500 opacity-0 group-hover/widget:opacity-100"
+        }`}
+        title="Move widget"
+      >
+        <GripHorizontal size={14} />
+      </div>
+      <motion.div
+        animate={{
+          scale: isDragging || isResizing ? 1.015 : 1,
+          y: isDragging ? -4 : 0
+        }}
+        transition={{ type: "spring", stiffness: 420, damping: 30 }}
+        className={`h-full min-h-[240px] rounded-2xl transition-[filter] duration-200 ${
+          isDragging || isResizing ? "ring-1 ring-indigo-400/40 brightness-110" : ""
+        }`}
+      >
+        {children}
+      </motion.div>
+      <button
+        type="button"
+        aria-label="Resize widget"
+        onPointerDown={handleResizeStart}
+        className={`absolute bottom-2 right-2 z-20 h-5 w-5 cursor-nwse-resize rounded-md border shadow-sm transition-all ${
+          isResizing
+            ? "border-indigo-400/50 bg-indigo-500/20 opacity-100"
+            : "border-white/10 bg-zinc-950/80 opacity-0 group-hover/widget:opacity-100"
+        }`}
+      >
+        <span className="absolute bottom-1 right-1 h-2 w-2 border-b border-r border-zinc-400" />
+      </button>
+    </motion.section>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
@@ -793,6 +1063,17 @@ export default function Dashboard() {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [draggingWidgetId, setDraggingWidgetId] = useState<DashboardWidgetId | null>(null);
+  const [resizingWidgetId, setResizingWidgetId] = useState<DashboardWidgetId | null>(null);
+  const [dashboardLayout, setDashboardLayout] = useState<DashboardWidgetLayout[]>(() => {
+    try {
+      const stored = window.localStorage.getItem(dashboardLayoutStorageKey);
+      const parsed = stored ? (JSON.parse(stored) as DashboardWidgetLayout[]) : null;
+      return parsed?.length ? normalizeDashboardLayout(parsed) : defaultWidgetLayouts;
+    } catch {
+      return defaultWidgetLayouts;
+    }
+  });
 
   useEffect(() => {
     if (sessionToken) {
@@ -810,45 +1091,56 @@ export default function Dashboard() {
   };
 
   const totalTasks = tasks.length;
-  const doneTasks = tasks.filter((t) => t.status === "done").length;
-  const inProgressTasks = tasks.filter((t) => t.status === "in_progress").length;
-  const todoTasks = tasks.filter((t) => t.status === "todo").length;
+  const pendingTasks = tasks.filter((t) => t.status !== "done").length;
+  const isEditingDashboardGrid = draggingWidgetId !== null || resizingWidgetId !== null;
 
-  const donePercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
-  const inProgressPercent = totalTasks > 0 ? Math.round((inProgressTasks / totalTasks) * 100) : 0;
-  const todoPercent = totalTasks > 0 ? Math.round((todoTasks / totalTasks) * 100) : 0;
+  const moveWidget = (from: DashboardWidgetId, to: DashboardWidgetId) => {
+    setDashboardLayout((current) => {
+      const fromIndex = current.findIndex((item) => item.id === from);
+      const toIndex = current.findIndex((item) => item.id === to);
+      if (fromIndex === -1 || toIndex === -1) return current;
+      const next = [...current];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      persistDashboardLayout(next);
+      return normalizeDashboardLayout(next);
+    });
+  };
+
+  const resizeWidget = (id: DashboardWidgetId, w: number, h: number) => {
+    setDashboardLayout((current) => {
+      const next = current.map((item) => (item.id === id ? { ...item, ...clampWidgetSize(id, w, h) } : item));
+      persistDashboardLayout(next);
+      return next;
+    });
+  };
+
+  const widgets: Record<DashboardWidgetId, { element: ReactNode }> = {
+    profile: { element: <UserProfileCard user={user} /> },
+    stopwatch: { element: <StopwatchCard /> },
+    priority: { element: <PriorityChartCard tasks={tasks} /> },
+    timeline: { element: <TaskTimelineCard /> },
+    luna: { element: <LunaAgentBlock /> },
+    system: { element: <SystemStatsCard /> },
+    tasks: { element: <RecentTasksCard tasks={tasks} sessionToken={sessionToken ?? ""} updateTask={updateTask} /> },
+    notes: { element: <RecentNotesCard notes={notes} /> }
+  };
 
   return (
     <div className="min-h-[calc(100vh-40px)] bg-background pb-28 text-zinc-100 font-sans">
-      <main className="p-8 max-w-[1400px] mx-auto flex flex-col gap-8">
-        {/* Top welcome row with percentages and metrics */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 border-b border-white/5 pb-6">
+      <main className="flex w-full flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-5 border-b border-white/5 pb-6 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent">
               {getGreeting(user.display_name ?? user.username)}
             </h1>
-            <p className="text-xs text-zinc-500 font-medium">{format(new Date(), "EEEE, MMMM d, yyyy")}</p>
-            
-            {/* Task completion capsules */}
-            <div className="flex flex-wrap items-center gap-2 mt-2 text-[10px] font-semibold text-zinc-400">
-              <div className="flex items-center gap-1.5 bg-zinc-900/60 border border-white/5 px-2.5 py-1 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                <span>Done: {donePercent}%</span>
-              </div>
-              <div className="flex items-center gap-1.5 bg-zinc-900/60 border border-white/5 px-2.5 py-1 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                <span>In Progress: {inProgressPercent}%</span>
-              </div>
-              <div className="flex items-center gap-1.5 bg-zinc-900/60 border border-white/5 px-2.5 py-1 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-                <span>To Do: {todoPercent}%</span>
-              </div>
-            </div>
           </div>
 
-          <div className="flex items-center justify-between w-full md:w-auto gap-8">
-            {/* Three key top right metrics */}
-            <div className="flex items-center gap-8 mr-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center xl:ml-auto">
+            <TimeWeatherPanel />
+
+            <div className="flex items-center justify-between gap-6">
+              <div className="flex items-center gap-6">
               <div className="text-right group hover:scale-105 transition-all duration-200">
                 <div className="text-3xl font-extrabold font-mono text-zinc-100 tracking-tight">{totalTasks}</div>
                 <div className="text-[9px] text-zinc-500 uppercase tracking-wider font-bold mt-1">Total Tasks</div>
@@ -856,7 +1148,7 @@ export default function Dashboard() {
 
               <div className="text-right group hover:scale-105 transition-all duration-200">
                 <div className="text-3xl font-extrabold font-mono text-indigo-400 tracking-tight">
-                  {tasks.filter((t) => t.status !== "done").length}
+                  {pendingTasks}
                 </div>
                 <div className="text-[9px] text-zinc-500 uppercase tracking-wider font-bold mt-1">Pending</div>
               </div>
@@ -867,49 +1159,59 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Profile Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setMenuOpen((v) => !v)}
-                className="flex items-center gap-2 rounded-xl border border-white/10 bg-zinc-900 hover:bg-zinc-800 p-1.5 transition-all duration-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50"
-              >
-                <UserAvatar seed={user.avatar_seed ?? user.id} className="h-8 w-8 rounded-lg border border-white/5" />
-                <ChevronDown size={14} className="text-zinc-400 pr-0.5" />
-              </button>
-              {menuOpen && (
-                <div className="absolute right-0 mt-2 w-40 rounded-xl border border-white/10 bg-zinc-950 p-1 shadow-lg z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-                  <Link className="block rounded-lg px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100" to="/profile">
-                    Profile Settings
-                  </Link>
-                  <button
-                    onClick={onSignOut}
-                    className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-red-400 hover:bg-red-500/10 hover:text-red-300"
-                    disabled={loading}
-                  >
-                    {loading ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : "Sign Out"}
-                  </button>
-                </div>
-              )}
+              <div className="relative">
+                <button
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="flex items-center gap-2 rounded-xl border border-white/10 bg-zinc-900 hover:bg-zinc-800 p-1.5 transition-all duration-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50"
+                >
+                  <UserAvatar seed={user.avatar_seed ?? user.id} className="h-8 w-8 rounded-lg border border-white/5" />
+                  <ChevronDown size={14} className="text-zinc-400 pr-0.5" />
+                </button>
+                {menuOpen && (
+                  <div className="absolute right-0 mt-2 w-40 rounded-xl border border-white/10 bg-zinc-950 p-1 shadow-lg z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <Link className="block rounded-lg px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-900 hover:text-zinc-100" to="/profile">
+                      Profile Settings
+                    </Link>
+                    <button
+                      onClick={onSignOut}
+                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                      disabled={loading}
+                    >
+                      {loading ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : "Sign Out"}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Dashboard 3-Column Card Layout Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* Row 1 */}
-          <UserProfileCard user={user} />
-          <StopwatchCard />
-          <PriorityChartCard tasks={tasks} />
-
-          {/* Row 2 */}
-          <TaskTimelineCard />
-          <LunaAgentBlock />
-
-          {/* Row 3 */}
-          <SystemStatsCard />
-          <RecentTasksCard tasks={tasks} sessionToken={sessionToken ?? ""} updateTask={updateTask} />
-          <RecentNotesCard notes={notes} />
-        </div>
+        <motion.div
+          layout
+          className={`dashboard-widget-grid grid grid-flow-dense auto-rows-[118px] grid-cols-12 gap-5 rounded-2xl border p-1 transition-[background-color,border-color,box-shadow] duration-200 ${
+            isEditingDashboardGrid
+              ? "border-indigo-500/20 bg-[linear-gradient(rgba(129,140,248,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(129,140,248,0.18)_1px,transparent_1px)] bg-[length:calc((100%-55px)/12)_138px] shadow-inner shadow-indigo-500/10"
+              : "border-transparent bg-transparent"
+          }`}
+        >
+          {dashboardLayout.map((layout) => (
+            <DashboardWidget
+              key={layout.id}
+              id={layout.id}
+              layout={layout}
+              draggingWidgetId={draggingWidgetId}
+              resizingWidgetId={resizingWidgetId}
+              onDragStartWidget={setDraggingWidgetId}
+              onDragEndWidget={() => setDraggingWidgetId(null)}
+              onResizeStartWidget={setResizingWidgetId}
+              onResizeEndWidget={() => setResizingWidgetId(null)}
+              onMoveWidget={moveWidget}
+              onResizeWidget={resizeWidget}
+            >
+              {widgets[layout.id].element}
+            </DashboardWidget>
+          ))}
+        </motion.div>
       </main>
     </div>
   );
