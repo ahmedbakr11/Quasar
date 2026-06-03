@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Clipboard, Eye, EyeOff, FolderOpen, Loader2, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Navigate } from "react-router-dom";
@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { UserAvatar } from "@/components/ui/avatar";
 import { useAgentStore } from "@/store/agentStore";
 import { useAuthStore } from "@/store/authStore";
+import { useRuntimeStore } from "@/store/runtimeStore";
 
-type Section = "profile" | "agent" | "appearance" | "keyboard";
+type Section = "profile" | "agent" | "runtime" | "appearance" | "keyboard";
 
 export default function Settings() {
   const token = useAuthStore((s) => s.sessionToken);
@@ -22,6 +23,12 @@ export default function Settings() {
   const updateSettings = useAgentStore((s) => s.updateSettings);
   const popupTransparency = useAgentStore((s) => s.popup_transparency);
   const muteShortcut = useAgentStore((s) => s.mute_shortcut);
+  const runtimeStatus = useRuntimeStore((s) => s.status);
+  const loadRuntimeStatus = useRuntimeStore((s) => s.loadStatus);
+  const restartLuna = useRuntimeStore((s) => s.restartLuna);
+  const restartLiveKit = useRuntimeStore((s) => s.restartLiveKit);
+  const openLogsFolder = useRuntimeStore((s) => s.openLogsFolder);
+  const copyDiagnostics = useRuntimeStore((s) => s.copyDiagnostics);
   const [active, setActive] = useState<Section>("profile");
   const [agentForm, setAgentForm] = useState({
     livekit_url: "",
@@ -35,6 +42,7 @@ export default function Settings() {
   const [showSecret, setShowSecret] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState<string | null>(null);
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
   const [avatarSeedDraft, setAvatarSeedDraft] = useState<string | null>(null);
   const loadedForTokenRef = useRef<string | null>(null);
@@ -69,6 +77,12 @@ export default function Settings() {
     };
     void run();
   }, [loadConfig, token]);
+
+  useEffect(() => {
+    void loadRuntimeStatus().catch(() => {
+      // Runtime status can be unavailable during early startup.
+    });
+  }, [loadRuntimeStatus]);
 
   const hasExistingSecret = useMemo(() => isConfigured, [isConfigured]);
   const displayName = displayNameDraft ?? (user?.display_name ?? "");
@@ -128,6 +142,31 @@ export default function Settings() {
     }
   };
 
+  const runRuntimeAction = async (label: string, action: () => Promise<unknown>) => {
+    setRuntimeBusy(label);
+    try {
+      await action();
+      toast.success(`${label} completed.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : typeof err === "string" ? err : `${label} failed`);
+    } finally {
+      setRuntimeBusy(null);
+    }
+  };
+
+  const copyRuntimeDiagnostics = async () => {
+    setRuntimeBusy("Copy diagnostics");
+    try {
+      const diagnostics = await copyDiagnostics();
+      await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+      toast.success("Diagnostics copied.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to copy diagnostics");
+    } finally {
+      setRuntimeBusy(null);
+    }
+  };
+
   return (
     <div className="min-h-[calc(100vh-40px)] bg-[#0a0a0a] pb-28 text-zinc-100">
       <div className="flex h-full">
@@ -143,6 +182,12 @@ export default function Settings() {
           onClick={() => setActive("agent")}
         >
           Agent
+        </button>
+        <button
+          className={`mb-1 w-full border-l-2 px-3 py-2 text-left text-sm ${active === "runtime" ? "border-l-indigo-500 bg-[#1a1a1a]" : "border-l-transparent text-zinc-400 hover:bg-surfaceAlt"}`}
+          onClick={() => setActive("runtime")}
+        >
+          Runtime
         </button>
         <button
           className={`mb-1 w-full border-l-2 px-3 py-2 text-left text-sm ${active === "appearance" ? "border-l-indigo-500 bg-[#1a1a1a]" : "border-l-transparent text-zinc-400 hover:bg-surfaceAlt"}`}
@@ -271,6 +316,70 @@ export default function Settings() {
             </div>
           )}
 
+          {active === "runtime" && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-border bg-surface p-6">
+                <h2 className="text-xl font-semibold">Runtime Services</h2>
+                <p className="mt-1 text-sm text-zinc-400">Quasar manages local LiveKit and Luna in the background.</p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <RuntimeServiceCard
+                  name="Local Server"
+                  state={runtimeStatus?.livekit.state ?? "stopped"}
+                  pid={runtimeStatus?.livekit.pid}
+                  error={runtimeStatus?.livekit.lastError}
+                />
+                <RuntimeServiceCard
+                  name="Luna"
+                  state={runtimeStatus?.luna.state ?? "stopped"}
+                  pid={runtimeStatus?.luna.pid}
+                  error={runtimeStatus?.luna.lastError}
+                />
+              </div>
+
+              <div className="rounded-xl border border-border bg-surface p-6">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => void runRuntimeAction("Restart Luna", restartLuna)}
+                    disabled={runtimeBusy !== null}
+                  >
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Restart Luna
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void runRuntimeAction("Restart Local Server", restartLiveKit)}
+                    disabled={runtimeBusy !== null}
+                  >
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Restart Local Server
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void runRuntimeAction("Open logs", openLogsFolder)}
+                    disabled={runtimeBusy !== null}
+                  >
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                    Open Logs
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void copyRuntimeDiagnostics()}
+                    disabled={runtimeBusy !== null}
+                  >
+                    <Clipboard className="mr-2 h-4 w-4" />
+                    Copy Diagnostics
+                  </Button>
+                </div>
+                {runtimeStatus?.logsDir && (
+                  <p className="mt-4 break-all text-xs text-zinc-500">{runtimeStatus.logsDir}</p>
+                )}
+              </div>
+            </div>
+          )}
+
           {active === "appearance" && (
             <div className="rounded-xl border border-border bg-surface p-6">
               <h2 className="text-xl font-semibold">Appearance</h2>
@@ -318,6 +427,35 @@ export default function Settings() {
         </div>
       </main>
       </div>
+    </div>
+  );
+}
+
+function RuntimeServiceCard({
+  name,
+  state,
+  pid,
+  error
+}: {
+  name: string;
+  state: string;
+  pid?: number | null;
+  error?: string | null;
+}) {
+  const stateColor =
+    state === "running" ? "bg-green-400" : state === "failed" ? "bg-red-400" : state === "starting" ? "bg-amber-300" : "bg-zinc-500";
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-zinc-100">{name}</p>
+        <span className="inline-flex items-center gap-2 rounded-full bg-[#1a1a1a] px-2.5 py-1 text-xs text-zinc-300">
+          <span className={`h-2 w-2 rounded-full ${stateColor}`} />
+          {state}
+        </span>
+      </div>
+      <p className="mt-3 text-xs text-zinc-500">PID: {pid ?? "not running"}</p>
+      {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
     </div>
   );
 }

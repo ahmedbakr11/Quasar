@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "release:v1": "powershell -ExecutionPolicy Bypass -File scripts/release-v1.ps1"
   },
   "dependencies": {
     "@dicebear/collection": "^9.4.2",

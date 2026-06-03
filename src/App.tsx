@@ -1,15 +1,17 @@
 import { Minus, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Toaster } from "sonner";
 import { AppErrorBoundary } from "@/components/layout/AppErrorBoundary";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { SplashScreen } from "@/components/layout/SplashScreen";
 import { LunaMiniVisualizer } from "@/components/luna/LunaMiniVisualizer";
 import { LunaRuntime } from "@/components/luna/LunaRuntime";
 import { useAuthStore } from "@/store/authStore";
+import { useRuntimeStore } from "@/store/runtimeStore";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -39,16 +41,30 @@ export default function App() {
   const navigate = useNavigate();
   const hydrate = useAuthStore((s) => s.hydrate);
   const token = useAuthStore((s) => s.sessionToken);
+  const startRuntimeListeners = useRuntimeStore((s) => s.startListeners);
+  const loadRuntimeStatus = useRuntimeStore((s) => s.loadStatus);
+  const [windowLabel] = useState(() => getCurrentWindow().label);
 
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
 
   useEffect(() => {
+    void startRuntimeListeners();
+    void loadRuntimeStatus().catch(() => {
+      // Runtime state is best-effort during very early startup.
+    });
+  }, [loadRuntimeStatus, startRuntimeListeners]);
+
+  useEffect(() => {
     if (!token && ["/dashboard", "/profile", "/luna", "/settings", "/tasks", "/notes"].includes(location.pathname)) {
       navigate("/login", { replace: true });
     }
   }, [location.pathname, navigate, token]);
+
+  if (windowLabel === "splash") {
+    return <SplashScreen />;
+  }
 
   const showDock = Boolean(token && ["/dashboard", "/profile", "/luna", "/settings", "/tasks", "/notes"].includes(location.pathname));
   const routeContent = (
