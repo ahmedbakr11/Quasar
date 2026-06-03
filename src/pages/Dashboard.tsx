@@ -162,7 +162,7 @@ function StopwatchCard() {
     });
   };
 
-  const radius = 54;
+  const radius = 58;
   const circumference = 2 * Math.PI * radius;
 
   // Stopwatch values
@@ -179,10 +179,10 @@ function StopwatchCard() {
       const isVisible = isResetState ? true : i > currentVal;
       if (isVisible) {
         const angleRad = ((i * 6 - 90) * Math.PI) / 180;
-        const x1 = 72 + 48 * Math.cos(angleRad);
-        const y1 = 72 + 48 * Math.sin(angleRad);
-        const x2 = 72 + 52 * Math.cos(angleRad);
-        const y2 = 72 + 52 * Math.sin(angleRad);
+        const x1 = 72 + (radius + 4) * Math.cos(angleRad);
+        const y1 = 72 + (radius + 4) * Math.sin(angleRad);
+        const x2 = 72 + (radius + 8) * Math.cos(angleRad);
+        const y2 = 72 + (radius + 8) * Math.sin(angleRad);
         ticks.push(
           <line
             key={i}
@@ -226,6 +226,14 @@ function StopwatchCard() {
               <div className="relative flex items-center justify-center w-36 h-36">
                 <svg className="w-full h-full" viewBox="0 0 144 144">
                   {renderTicks(stopwatchCurrentSecond, stopwatchTime === 0)}
+                  {/* Background track circle */}
+                  <circle
+                    cx="72"
+                    cy="72"
+                    r={radius}
+                    className="stroke-white/5 fill-none"
+                    strokeWidth="5"
+                  />
                   {stopwatchTime > 0 && (
                     <circle
                       cx="72"
@@ -300,6 +308,14 @@ function StopwatchCard() {
               <div className="relative flex items-center justify-center w-36 h-36">
                 <svg className="w-full h-full" viewBox="0 0 144 144">
                   {renderTicks(timerCurrentSecond, timerTime === timerDuration)}
+                  {/* Background track circle */}
+                  <circle
+                    cx="72"
+                    cy="72"
+                    r={radius}
+                    className="stroke-white/5 fill-none"
+                    strokeWidth="5"
+                  />
                   {timerTime < timerDuration && (
                     <circle
                       cx="72"
@@ -384,7 +400,7 @@ function PriorityChartCard({ tasks }: { tasks: Task[] }) {
   const total = high + medium + low;
 
   const maxVal = Math.max(high, medium, low, 1);
-  const getPercent = (val: number) => Math.max(10, Math.min(100, (val / maxVal) * 100));
+  const getPercent = (val: number) => val === 0 ? 0 : Math.max(10, Math.min(100, (val / maxVal) * 100));
 
   return (
     <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#111111] p-6 shadow-md h-[260px] hover:border-indigo-500/30 transition-all duration-300">

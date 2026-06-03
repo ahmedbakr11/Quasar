@@ -38,3 +38,4 @@ ENV/
 # Project Specific
 /Luna_Agent/memory.json
 /Luna_Agent/livekit-server.exe
+/The Mesh
