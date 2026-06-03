@@ -12,6 +12,7 @@ import { useAgentStore } from "@/store/agentStore";
 import { useAuthStore } from "@/store/authStore";
 
 import { GlobalAgentStateProvider } from "@/components/luna/GlobalAgentState";
+import { QuirkAntigravityProvider } from "@/components/luna/QuirkAntigravityContext";
 
 type Props = {
   children: ReactNode;
@@ -33,8 +34,9 @@ export function LunaRuntime({ children }: Props) {
   const lastConnectAttemptRef = useRef(0);
 
   const tokenSource = useMemo(
-    () =>
-      TokenSource.custom(async () => {
+    () => {
+      void connectCount;
+      return TokenSource.custom(async () => {
         if (!sessionToken) {
           throw new Error("Not authenticated");
         }
@@ -43,7 +45,8 @@ export function LunaRuntime({ children }: Props) {
           participantToken,
           serverUrl: livekitUrl
         };
-      }),
+      });
+    },
     [livekitUrl, sessionToken, connectCount]
   );
 
@@ -162,7 +165,9 @@ export function LunaRuntime({ children }: Props) {
       <AgentSessionProvider session={session}>
         <GlobalShortcutManager muteShortcut={muteShortcut} />
         <GlobalAgentStateProvider>
-          {children}
+          <QuirkAntigravityProvider>
+            {children}
+          </QuirkAntigravityProvider>
         </GlobalAgentStateProvider>
       </AgentSessionProvider>
     </LunaRuntimeContext.Provider>

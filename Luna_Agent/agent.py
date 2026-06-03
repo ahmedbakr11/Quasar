@@ -15,7 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from livekit.agents import AgentSession, JobContext, WorkerOptions, cli, llm, mcp, room_io
 from livekit.plugins import google as livekit_google
-from typing import Annotated, Callable
+from typing import Annotated, Callable, Any
 from datetime import datetime, timezone
 from uuid import uuid4
 from memory import (
@@ -1063,8 +1063,8 @@ async def entrypoint(ctx: JobContext):
     def on_data_received(data_packet):
         try:
             payload = json.loads(data_packet.data.decode('utf-8'))
-            if payload.get("type") == "antigravity_kill_task":
-                task_id = payload.get("task_id")
+            if payload.get("type") in {"antigravity_kill_task", "quirk_antigravity_kill"}:
+                task_id = payload.get("taskId") or payload.get("task_id")
                 if task_id:
                     delegator_instance.kill_task(task_id)
         except Exception as e:

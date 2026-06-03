@@ -1,28 +1,23 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { useRoomContext } from "@livekit/components-react";
-import { RoomEvent } from "livekit-client";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Terminal, CheckCircle2, XCircle, X, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2, Terminal, X, XCircle } from "lucide-react";
 import { AgentAudioVisualizerGrid } from "@/components/agents/agent-audio-visualizer-grid";
 import { ChatPanel } from "@/components/luna/ChatPanel";
 import { ControlBar } from "@/components/luna/ControlBar";
-import { MatrixBoard } from "@/components/luna/MatrixBoard";
 import { useGlobalAgentState } from "@/components/luna/GlobalAgentState";
 import { useLunaRuntime } from "@/components/luna/LunaRuntimeContext";
+import { MatrixBoard } from "@/components/luna/MatrixBoard";
+import {
+  type QuirkAntigravityLog,
+  type QuirkAntigravityTask,
+  useQuirkAntigravity,
+} from "@/components/luna/QuirkAntigravityContext";
 
-interface ActiveTaskState {
-  id: string;
-  task: string;
-  status: "running" | "success" | "error";
-  logs: string[];
-  output?: string;
-  error?: string;
-  startTime?: number;
-}
+type LogView = "output" | "diagnostics" | "all";
 
 interface TaskWidgetProps {
-  task: ActiveTaskState;
-  containerRef: React.RefObject<HTMLDivElement>;
+  task: QuirkAntigravityTask;
+  containerRef: RefObject<HTMLDivElement | null>;
   index: number;
   onDismiss: () => void;
   onKill: (taskId: string) => void;
@@ -30,36 +25,32 @@ interface TaskWidgetProps {
 
 function TaskWidget({ task, containerRef, index, onDismiss, onKill }: TaskWidgetProps) {
   const consoleRef = useRef<HTMLDivElement>(null);
-  const [elapsed, setElapsed] = useState(0);
+  const [logView, setLogView] = useState<LogView>("all");
+  const [now, setNow] = useState(() => Date.now());
 
-  // Auto-scroll logs to bottom in real-time
+  const visibleLogs = useMemo(() => filterLogs(task.logs, logView), [logView, task.logs]);
+  const statusMeta = getStatusMeta(task.status);
+  const elapsed = useMemo(() => elapsedSeconds(task, now), [now, task]);
+
+  useEffect(() => {
+    if (task.status !== "running") return;
+    const interval = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [task.status]);
+
   useEffect(() => {
     if (consoleRef.current) {
       consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
     }
-  }, [task.logs]);
+  }, [visibleLogs]);
 
-  // Handle 10-minute (600s) timeout counting
-  useEffect(() => {
-    if (task.status !== "running") {
-      setElapsed(0);
-      return;
-    }
-
-    const interval = setInterval(() => {
-      const sec = Math.floor((Date.now() - (task.startTime ?? Date.now())) / 1000);
-      setElapsed(Math.min(sec, 600));
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [task]);
-
-  // Staggered initial spawn offsets
   const initialStyle = useMemo(() => {
-    const offset = index * 45;
+    const offset = index * 44;
     return {
-      top: `${100 + offset}px`,
-      left: `${100 + offset}px`,
+      top: `${96 + offset}px`,
+      left: `${96 + offset}px`,
     };
   }, [index]);
 
@@ -73,127 +64,105 @@ function TaskWidget({ task, containerRef, index, onDismiss, onKill }: TaskWidget
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       style={initialStyle}
-      className="absolute w-96 z-25 bg-[#0d0d10]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.5)] text-zinc-100 flex flex-col gap-3 font-sans text-xs select-none cursor-grab active:cursor-grabbing hover:border-indigo-500/30 transition-colors"
+      className="absolute z-30 flex w-[28rem] cursor-grab select-none flex-col gap-3 rounded-lg border border-white/10 bg-[#0d0d10]/95 p-4 text-xs text-zinc-100 shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-xl transition-colors hover:border-indigo-500/30 active:cursor-grabbing"
     >
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-white/5 pb-2">
-        <div className="flex items-center gap-2 text-indigo-400 font-medium">
-          <span className="font-semibold tracking-wide uppercase text-[10px]">Antigravity Delegate</span>
+        <div className="flex items-center gap-2 text-indigo-300">
+          <Terminal className="h-3.5 w-3.5" />
+          <span className="text-[10px] font-semibold uppercase tracking-wide">Quirk Antigravity</span>
         </div>
         <button
           onClick={onDismiss}
-          className="text-zinc-500 hover:text-zinc-300 transition-colors rounded p-0.5 hover:bg-white/5"
+          className="rounded p-0.5 text-zinc-500 transition-colors hover:bg-white/5 hover:text-zinc-300"
+          title="Dismiss widget"
+          aria-label="Dismiss widget"
         >
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      {/* Task Details */}
       <div className="flex flex-col gap-1">
-        <span className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider">Active Task</span>
-        <p className="text-zinc-200 font-medium line-clamp-2 leading-relaxed text-sm">{task.task}</p>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Task</span>
+        <p className="line-clamp-2 text-sm font-medium leading-relaxed text-zinc-200">{task.title}</p>
       </div>
 
-      {/* Status & Countdown Progress */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-[11px] text-zinc-400">
-          <span className="flex items-center gap-1.5 font-medium">
-            {task.status === "running" ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />
-                <span className="text-indigo-400">Running Task...</span>
-              </>
-            ) : task.status === "success" ? (
-              <>
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                <span className="text-emerald-400 font-medium">Completed</span>
-              </>
-            ) : (
-              <>
-                <XCircle className="h-3.5 w-3.5 text-red-400" />
-                <span className="text-red-400 font-medium">Failed</span>
-              </>
-            )}
+          <span className={`flex items-center gap-1.5 font-medium ${statusMeta.textClass}`}>
+            {statusMeta.icon}
+            {statusMeta.label}
           </span>
-          {task.status === "running" && (
-            <span className="font-mono text-zinc-500">
-              {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")} / 10:00
-            </span>
-          )}
+          <span className="font-mono text-zinc-500">{formatElapsed(elapsed)}</span>
         </div>
-
         {task.status === "running" && (
-          <div className="w-full bg-zinc-800/60 h-1 rounded-full overflow-hidden">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-800/60">
             <motion.div
-              className="bg-indigo-500 h-full rounded-full"
-              style={{ width: `${(elapsed / 600) * 100}%` }}
+              className="h-full rounded-full bg-indigo-500"
+              style={{ width: `${Math.min((elapsed / 600) * 100, 100)}%` }}
               transition={{ ease: "linear" }}
             />
           </div>
         )}
       </div>
 
-      {/* Console Logs */}
-      {task.logs.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1">
-            <Terminal className="h-3 w-3" /> Console Output
-          </span>
-          <div 
-            ref={consoleRef}
-            className="bg-black/95 rounded-xl p-3 font-mono text-[10px] text-zinc-300 h-40 overflow-y-auto border border-white/5 flex flex-col gap-1.5 leading-relaxed shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
-          >
-            {task.logs.map((log, index) => {
-              // Custom coloring for different log types to improve aesthetics
-              let logColor = "text-zinc-300";
-              if (log.includes("[error]") || log.includes("Error:") || log.includes("FAILED")) {
-                logColor = "text-red-400 font-medium";
-              } else if (log.includes("[success]") || log.includes("SUCCESS") || log.includes("Completed")) {
-                logColor = "text-emerald-400 font-medium";
-              } else if (log.includes("Thinking...") || log.includes("[thinking]")) {
-                logColor = "text-indigo-400 italic animate-pulse";
-              } else if (log.includes("[warning]")) {
-                logColor = "text-amber-400";
-              }
-              
-              return (
-                <div key={index} className={`break-all whitespace-pre-wrap ${logColor}`}>
-                  <span className="text-indigo-500/70 mr-1.5 font-sans font-bold select-none">$</span>
-                  {log}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Result Displayers */}
-      {task.status === "success" && task.output && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider">Output Summary</span>
-          <div className="bg-emerald-950/20 border border-emerald-900/40 rounded-xl p-3 font-mono text-[10px] text-emerald-300 max-h-24 overflow-y-auto leading-relaxed">
-            {task.output}
-          </div>
-        </div>
-      )}
-      {task.status === "error" && task.error && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider">Failure Error</span>
-          <div className="bg-red-950/20 border border-red-900/40 rounded-xl p-3 font-mono text-[10px] text-red-300 max-h-24 overflow-y-auto leading-relaxed">
-            {task.error}
-          </div>
-        </div>
-      )}
-
-      {/* Terminate/Kill Subprocess Switch */}
-      {task.status === "running" && (
-        <div className="flex justify-end mt-1">
+      <div className="inline-flex w-full rounded-lg border border-white/10 bg-black/30 p-1">
+        {(["all", "output", "diagnostics"] as const).map((view) => (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
+            key={view}
+            onClick={() => setLogView(view)}
+            className={`flex-1 rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+              logView === view ? "bg-indigo-500/25 text-indigo-100" : "text-zinc-500 hover:text-zinc-200"
+            }`}
+          >
+            {view === "all" ? "All" : view === "output" ? "Output" : "Diagnostics"}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+          <Terminal className="h-3 w-3" /> Logs
+        </span>
+        <div
+          ref={consoleRef}
+          className="flex h-48 flex-col gap-1.5 overflow-y-auto rounded-lg border border-white/5 bg-black/95 p-3 font-mono text-[10px] leading-relaxed text-zinc-300 shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
+        >
+          {visibleLogs.length > 0 ? (
+            visibleLogs.map((log) => (
+              <div key={log.id} className={`whitespace-pre-wrap break-words ${logClass(log)}`}>
+                <span className="mr-1.5 select-none font-sans font-bold text-indigo-500/70">
+                  {streamLabel(log.stream)}
+                </span>
+                {log.line}
+              </div>
+            ))
+          ) : (
+            <div className="text-zinc-600">
+              {task.status === "running" ? "Waiting for Antigravity stream..." : "No logs for this view."}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {task.output && (
+        <div className="max-h-24 overflow-y-auto rounded-lg border border-emerald-900/40 bg-emerald-950/20 p-3 font-mono text-[10px] leading-relaxed text-emerald-300">
+          {task.output}
+        </div>
+      )}
+      {task.error && (
+        <div className="max-h-24 overflow-y-auto rounded-lg border border-red-900/40 bg-red-950/20 p-3 font-mono text-[10px] leading-relaxed text-red-300">
+          {task.error}
+        </div>
+      )}
+
+      {task.status === "running" && (
+        <div className="flex justify-end">
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
               onKill(task.id);
             }}
-            className="bg-red-500/10 hover:bg-red-500/20 active:bg-red-500/35 text-red-400 hover:text-red-300 font-semibold px-2 py-0.5 rounded-lg border border-red-500/20 hover:border-red-500/35 transition-all flex items-center gap-1 cursor-pointer text-[9px] uppercase tracking-wider select-none"
+            className="flex cursor-pointer items-center gap-1 rounded-lg border border-red-500/20 bg-red-500/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-red-400 transition-all hover:border-red-500/35 hover:bg-red-500/20 hover:text-red-300 active:bg-red-500/35"
           >
             <XCircle className="h-2.5 w-2.5" />
             <span>Terminate</span>
@@ -207,110 +176,18 @@ function TaskWidget({ task, containerRef, index, onDismiss, onKill }: TaskWidget
 export function LunaConnected() {
   const { connectionState } = useLunaRuntime();
   const containerRef = useRef<HTMLDivElement>(null);
-  const room = useRoomContext();
   const { agentState, agentMicTrack, userMicTrack } = useGlobalAgentState();
+  const { tasks, dismissTask, killTask } = useQuirkAntigravity();
   const [showTranscript, setShowTranscript] = useState(false);
   const [mode, setMode] = useState<"voice" | "matrix">("voice");
-  const [tasks, setTasks] = useState<Record<string, ActiveTaskState>>({});
-  const [dismissedTasks, setDismissedTasks] = useState<Record<string, boolean>>({});
 
   const visualState = connectionState === "connected" ? agentState : "idle";
 
-  const handleKillTask = async (taskId: string) => {
-    if (!room) return;
-    const payload = JSON.stringify({
-      type: "antigravity_kill_task",
-      task_id: taskId,
-    });
-    const bytes = new TextEncoder().encode(payload);
-    try {
-      await room.localParticipant.publishData(bytes, { reliable: true });
-    } catch (e) {
-      console.error("Failed to publish kill task data packet:", e);
-    }
-  };
-
-  // Monitor LiveKit data channel messages for multiple task streams
-  useEffect(() => {
-    if (!room) return;
-
-    const handleDataReceived = (payload: Uint8Array) => {
-      try {
-        const text = new TextDecoder().decode(payload);
-        const parsed = JSON.parse(text);
-        console.log("[Antigravity Data Packet]:", parsed);
-
-        if (parsed.type === "antigravity_task_status") {
-          const taskId = parsed.task_id;
-          if (!taskId) return;
-
-          if (parsed.status === "running") {
-            // Re-enable visibility of this specific task widget
-            setDismissedTasks((prev) => ({ ...prev, [taskId]: false }));
-            setTasks((prev) => {
-              const existingLogs = prev[taskId]?.logs || [];
-              return {
-                ...prev,
-                [taskId]: {
-                  id: taskId,
-                  task: parsed.task,
-                  status: "running",
-                  logs: existingLogs,
-                  startTime: Date.now()
-                }
-              };
-            });
-          } else {
-            setTasks((prev) => {
-              if (!prev[taskId]) return prev;
-              return {
-                ...prev,
-                [taskId]: {
-                  ...prev[taskId],
-                  status: parsed.status,
-                  output: parsed.output || undefined,
-                  error: parsed.error || undefined
-                }
-              };
-            });
-          }
-        } else if (parsed.type === "antigravity_task_log") {
-          const taskId = parsed.task_id;
-          if (!taskId) return;
-
-          setTasks((prev) => {
-            const existing = prev[taskId] || {
-              id: taskId,
-              task: parsed.task || "Delegated Task",
-              status: "running",
-              logs: [],
-              startTime: Date.now()
-            };
-            return {
-              ...prev,
-              [taskId]: {
-                ...existing,
-                logs: [...existing.logs.slice(-99), parsed.log] // Keep last 100 log lines
-              }
-            };
-          });
-        }
-      } catch (e) {
-        // Non-JSON or other event payload
-      }
-    };
-
-    room.on(RoomEvent.DataReceived, handleDataReceived);
-    return () => {
-      room.off(RoomEvent.DataReceived, handleDataReceived);
-    };
-  }, [room]);
-
   return (
     <div className="flex h-[calc(100vh-40px)]">
-      <section 
+      <section
         ref={containerRef}
-        className={`flex flex-col bg-[#0a0a0a] transition-all duration-200 relative ${showTranscript ? "w-3/5" : "w-full"}`}
+        className={`relative flex flex-col bg-[#0a0a0a] transition-all duration-200 ${showTranscript ? "w-3/5" : "w-full"}`}
       >
         <div className="px-6 pb-2 pt-4">
           <div className="inline-flex rounded-xl border border-white/10 bg-[#141417] p-1">
@@ -348,7 +225,7 @@ export function LunaConnected() {
             </div>
             <ControlBar
               showTranscript={showTranscript}
-              onToggleTranscript={() => setShowTranscript((v) => !v)}
+              onToggleTranscript={() => setShowTranscript((value) => !value)}
             />
           </>
         ) : (
@@ -357,26 +234,25 @@ export function LunaConnected() {
           </div>
         )}
 
-        {/* Antigravity Progress Widgets (rendered only when in Mesh Mode, allowing multiple concurrent widgets) */}
         <AnimatePresence>
-          {mode === "matrix" && Object.values(tasks)
-            .filter((t) => !dismissedTasks[t.id])
-            .map((task, index) => (
+          {mode === "matrix" &&
+            tasks.map((task, index) => (
               <TaskWidget
                 key={task.id}
                 task={task}
                 containerRef={containerRef}
                 index={index}
-                onDismiss={() => setDismissedTasks((prev) => ({ ...prev, [task.id]: true }))}
-                onKill={handleKillTask}
+                onDismiss={() => dismissTask(task.id)}
+                onKill={(taskId) => {
+                  void killTask(taskId);
+                }}
               />
-            ))
-          }
+            ))}
         </AnimatePresence>
       </section>
       <section
         className={`border-l border-[#222222] bg-[#111111] transition-all duration-200 ${
-          showTranscript ? "w-2/5 opacity-100" : "w-0 overflow-hidden border-l-0 opacity-0 pointer-events-none"
+          showTranscript ? "w-2/5 opacity-100" : "pointer-events-none w-0 overflow-hidden border-l-0 opacity-0"
         }`}
         aria-hidden={!showTranscript}
       >
@@ -386,4 +262,66 @@ export function LunaConnected() {
       </section>
     </div>
   );
+}
+
+function filterLogs(logs: QuirkAntigravityLog[], view: LogView): QuirkAntigravityLog[] {
+  if (view === "all") return logs;
+  if (view === "diagnostics") {
+    return logs.filter((log) => log.stream === "diagnostic" || log.stream === "lifecycle");
+  }
+  return logs.filter((log) => log.stream === "stdout" || log.stream === "stderr");
+}
+
+function elapsedSeconds(task: QuirkAntigravityTask, now: number): number {
+  const end = task.status === "running" ? now : task.endedAt ?? now;
+  return Math.max(0, Math.floor((end - task.startedAt) / 1000));
+}
+
+function formatElapsed(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getStatusMeta(status: QuirkAntigravityTask["status"]) {
+  if (status === "success") {
+    return {
+      label: "Completed",
+      textClass: "text-emerald-400",
+      icon: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />,
+    };
+  }
+  if (status === "cancelled") {
+    return {
+      label: "Cancelled",
+      textClass: "text-amber-400",
+      icon: <XCircle className="h-3.5 w-3.5 text-amber-400" />,
+    };
+  }
+  if (status === "error") {
+    return {
+      label: "Failed",
+      textClass: "text-red-400",
+      icon: <XCircle className="h-3.5 w-3.5 text-red-400" />,
+    };
+  }
+  return {
+    label: "Running",
+    textClass: "text-indigo-400",
+    icon: <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />,
+  };
+}
+
+function logClass(log: QuirkAntigravityLog): string {
+  if (log.stream === "stderr") return "text-red-300";
+  if (log.stream === "diagnostic") return "text-cyan-300";
+  if (log.stream === "lifecycle") return "text-indigo-300";
+  return "text-zinc-300";
+}
+
+function streamLabel(stream: QuirkAntigravityLog["stream"]): string {
+  if (stream === "stderr") return "err";
+  if (stream === "diagnostic") return "diag";
+  if (stream === "lifecycle") return "sys";
+  return "out";
 }
