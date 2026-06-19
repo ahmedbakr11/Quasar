@@ -175,8 +175,8 @@ export default function Tasks() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-40px)] bg-background pb-28">
-      <main className="relative overflow-y-auto p-8" onClick={() => { setColorMenu(null); setListColorMenu(null); }}>
+    <div className="app-page-scroll bg-background pb-28">
+      <main className="relative p-8" onClick={() => { setColorMenu(null); setListColorMenu(null); }}>
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-3xl font-bold">Tasks</h1>
@@ -748,4 +748,3 @@ function TaskCard({
     </div>
   );
 }
-

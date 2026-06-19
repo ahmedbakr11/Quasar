@@ -19,6 +19,7 @@ type NoteState = {
   notes: Note[];
   isLoading: boolean;
   loadNotes: (sessionToken: string) => Promise<void>;
+  syncNotes: (sessionToken: string) => Promise<void>;
   createNote: (sessionToken: string, input: CreateNoteInput) => Promise<void>;
   updateNote: (
     sessionToken: string,
@@ -45,6 +46,10 @@ export const useNoteStore = create<NoteState>((set) => ({
     } finally {
       set({ isLoading: false });
     }
+  },
+  syncNotes: async (sessionToken) => {
+    const notes = await listNotes(sessionToken);
+    set({ notes });
   },
   createNote: async (sessionToken, input) => {
     const created = await createNoteApi(sessionToken, input);

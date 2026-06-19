@@ -19,12 +19,18 @@ Packaged V1 does not use LiveKit `--dev` mode.
 
 ## Sidecars
 
-Before a distributable installer build, place these files in `src-tauri/resources/bin`:
+Before a distributable installer build, generate/copy these files into `src-tauri/resources/bin`:
 
 - `livekit-server.exe`
 - `luna-agent.exe`
 
-`luna-agent.exe` should be produced from `Luna_Agent/agent.py` with PyInstaller and include the dependencies from `Luna_Agent/requirements.txt`.
+Build Luna and copy the existing local LiveKit binary with:
+
+```powershell
+npm run luna:build
+```
+
+This creates `Luna_Agent/.venv-release`, installs `Luna_Agent/requirements.txt` and PyInstaller, builds `Luna_Agent/agent.py` as `luna-agent.exe`, and copies both sidecars into `src-tauri/resources/bin`.
 
 ## Logs
 
@@ -44,4 +50,4 @@ The Settings Runtime page and tray menu include log access and diagnostics actio
 npm run release:v1
 ```
 
-The script runs lint, frontend build, Rust check, and Tauri bundling. It warns if sidecar binaries are missing.
+The script builds Luna first, then runs lint, frontend build, Rust check, and Tauri bundling. It warns if sidecar binaries are missing.

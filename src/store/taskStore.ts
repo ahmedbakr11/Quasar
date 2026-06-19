@@ -30,6 +30,7 @@ type TaskState = {
   viewMode: ViewMode;
   isLoading: boolean;
   loadTasks: (sessionToken: string) => Promise<void>;
+  syncTasks: (sessionToken: string) => Promise<void>;
   createTask: (sessionToken: string, input: CreateTaskInput) => Promise<void>;
   updateTask: (
     sessionToken: string,
@@ -63,6 +64,10 @@ export const useTaskStore = create<TaskState>((set) => ({
     } finally {
       set({ isLoading: false });
     }
+  },
+  syncTasks: async (sessionToken) => {
+    const payload = await listTasks(sessionToken);
+    set({ tasks: payload.tasks, lists: payload.lists });
   },
   createTask: async (sessionToken, input) => {
     const created = await createTaskApi(sessionToken, input);

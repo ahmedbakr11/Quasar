@@ -3,7 +3,8 @@ mod db;
 mod models;
 
 use commands::auth::{
-    get_current_user, login, logout, register_user, update_profile,
+    complete_onboarding, get_current_user, get_onboarding_status, login, logout, register_user,
+    update_profile,
 };
 use commands::agent::{
     generate_livekit_token, load_agent_config, save_agent_config, test_agent_connection,
@@ -12,8 +13,10 @@ use commands::notes::{
     create_note, delete_note, list_notes, update_note,
 };
 use commands::runtime::{
-    copy_diagnostics, get_runtime_status, open_logs_folder, restart_livekit, restart_luna,
-    RuntimeManager,
+    copy_diagnostics, get_luna_setup_status, get_runtime_status, load_quirks_settings,
+    open_logs_folder, restart_livekit, restart_luna, save_luna_api_key,
+    save_luna_onboarding_env, load_luna_memory_settings, save_luna_persistent_memory,
+    save_quirks_settings, RuntimeManager,
 };
 use commands::tasks::{
     create_task, delete_task, list_tasks, move_task, set_list_color, toggle_subtask, update_task,
@@ -40,29 +43,13 @@ pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
             let db_path = init_db(app.handle())?;
-            app.manage(AppState { db_path });
-            let runtime = RuntimeManager::new(app.handle())?;
+            app.manage(AppState {
+                db_path: db_path.clone(),
+            });
+            let runtime = RuntimeManager::new(app.handle(), db_path)?;
+            runtime.ensure_local_config()?;
             app.manage(runtime);
             setup_tray(app.handle())?;
-
-            let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                if let Some(runtime) = app_handle.try_state::<RuntimeManager>() {
-                    runtime.start_all(app_handle.clone());
-                }
-                let _ = commands::runtime::emit_startup(
-                    &app_handle,
-                    "Opening workspace",
-                    app_handle.state::<RuntimeManager>().status(),
-                );
-                if let Some(main) = app_handle.get_webview_window("main") {
-                    let _ = main.show();
-                    let _ = main.set_focus();
-                }
-                if let Some(splash) = app_handle.get_webview_window("splash") {
-                    let _ = splash.close();
-                }
-            });
             Ok(())
         })
         .plugin(
@@ -80,6 +67,8 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             register_user,
+            get_onboarding_status,
+            complete_onboarding,
             login,
             logout,
             get_current_user,
@@ -109,7 +98,14 @@ pub fn run() {
             restart_luna,
             restart_livekit,
             open_logs_folder,
-            copy_diagnostics
+            copy_diagnostics,
+            get_luna_setup_status,
+            save_luna_api_key,
+            save_luna_onboarding_env,
+            load_luna_memory_settings,
+            save_luna_persistent_memory,
+            load_quirks_settings,
+            save_quirks_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -136,6 +132,40 @@ pub fn run() {
                 "Quasar is still running in the system tray",
                 app_handle.state::<RuntimeManager>().status(),
             );
+        }
+        RunEvent::Ready => {
+            let app_handle = app_handle.clone();
+            let should_start = app_handle
+                .try_state::<RuntimeManager>()
+                .map(|runtime| runtime.mark_startup_started())
+                .unwrap_or(false);
+            if should_start {
+                std::thread::spawn(move || {
+                    let _ = commands::runtime::emit_startup(
+                        &app_handle,
+                        "Starting Quasar",
+                        app_handle.state::<RuntimeManager>().status(),
+                    );
+                    if let Some(runtime) = app_handle.try_state::<RuntimeManager>() {
+                        runtime.start_all(app_handle.clone());
+                    }
+                    let _ = commands::runtime::emit_startup(
+                        &app_handle,
+                        "Opening workspace",
+                        app_handle.state::<RuntimeManager>().status(),
+                    );
+                    let ui_handle = app_handle.clone();
+                    let _ = app_handle.run_on_main_thread(move || {
+                        if let Some(main) = ui_handle.get_webview_window("main") {
+                            let _ = main.show();
+                            let _ = main.set_focus();
+                        }
+                        if let Some(splash) = ui_handle.get_webview_window("splash") {
+                            let _ = splash.close();
+                        }
+                    });
+                });
+            }
         }
         RunEvent::ExitRequested { .. } | RunEvent::Exit => {
             if let Some(runtime) = app_handle.try_state::<RuntimeManager>() {

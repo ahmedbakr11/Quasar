@@ -762,7 +762,7 @@ function RecentNotesCard({ notes }: { notes: Note[] }) {
         </Link>
       </div>
 
-      <div className="flex-1 my-3 flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-none justify-center">
+      <div className="flex-1 mt-3 flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-none">
         {recentNotes.length > 0 ? (
           recentNotes.map((note) => (
             <Link
@@ -1127,7 +1127,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-40px)] bg-background pb-28 text-zinc-100 font-sans">
+    <div className="app-page-scroll bg-background pb-28 text-zinc-100 font-sans">
       <main className="flex w-full flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-5 border-b border-white/5 pb-6 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-col gap-2">

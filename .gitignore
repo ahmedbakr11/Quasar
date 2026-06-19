@@ -38,4 +38,12 @@ ENV/
 # Project Specific
 /Luna_Agent/memory.json
 /Luna_Agent/livekit-server.exe
+/Luna_Agent/.venv-release/
+/Luna_Agent/build/
+/Luna_Agent/dist/
+/Luna_Agent/*.spec
+/build/
+/luna-agent.spec
+/src-tauri/resources/bin/*.exe
 /The Mesh
+Google MCP Guide.md

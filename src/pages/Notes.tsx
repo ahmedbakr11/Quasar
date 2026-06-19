@@ -134,7 +134,7 @@ export default function Notes() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-40px)] bg-background pb-28">
+    <div className="app-page-scroll bg-background pb-28">
       <main className="mx-auto max-w-7xl p-8">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>

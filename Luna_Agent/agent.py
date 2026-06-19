@@ -35,6 +35,13 @@ except Exception:
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 AGENT_ENV_PATH = os.path.join(AGENT_DIR, ".env")
 LUNA_IMAGE_ENVELOPE_PREFIX = "[[LUNA_IMAGE_V1]]"
+GOOGLE_WORKSPACE_MCP_ENDPOINTS = {
+    "gmail": "https://gmailmcp.googleapis.com/mcp/v1",
+    "drive": "https://drivemcp.googleapis.com/mcp/v1",
+    "calendar": "https://calendarmcp.googleapis.com/mcp/v1",
+    "chat": "https://chatmcp.googleapis.com/mcp/v1",
+    "people": "https://people.googleapis.com/mcp/v1",
+}
 
 # Always load env from Luna_Agent/.env regardless of caller working directory.
 dotenv_loaded = load_dotenv(dotenv_path=AGENT_ENV_PATH, override=False)
@@ -77,11 +84,146 @@ def _parse_allowed_tools(raw_tools: str) -> list[str]:
     return [tool.strip() for tool in raw_tools.split(",") if tool.strip()]
 
 
+def _compact_secret(value: str) -> str:
+    return re.sub(r"\s+", "", value or "")
+
+
+def _parse_capabilities(raw_capabilities: str) -> list[str]:
+    if not raw_capabilities.strip():
+        return ["gmail", "drive", "calendar", "people", "chat"]
+    stripped = raw_capabilities.strip()
+    if stripped.startswith("["):
+        parsed = json.loads(stripped)
+        if not isinstance(parsed, list):
+            raise ValueError("GOOGLE_WORKSPACE_ENABLED_CAPABILITIES JSON must be a list.")
+        values = [str(item).strip().lower() for item in parsed if str(item).strip()]
+    else:
+        values = [item.strip().lower() for item in stripped.split(",") if item.strip()]
+    unsupported = sorted(set(values) - set(GOOGLE_WORKSPACE_MCP_ENDPOINTS))
+    if unsupported:
+        print(f"Google Workspace MCP warning: ignoring unsupported capabilities: {unsupported}")
+    supported = [value for value in values if value in GOOGLE_WORKSPACE_MCP_ENDPOINTS]
+    return supported or ["gmail", "drive", "calendar", "people", "chat"]
+
+
+def _fetch_google_oauth_access_token() -> str:
+    explicit = _compact_secret(os.getenv("GOOGLE_WORKSPACE_ACCESS_TOKEN", ""))
+    if explicit:
+        return explicit
+
+    client_id = _compact_secret(os.getenv("GOOGLE_WORKSPACE_CLIENT_ID", ""))
+    client_secret = _compact_secret(os.getenv("GOOGLE_WORKSPACE_CLIENT_SECRET", ""))
+    refresh_token = _compact_secret(os.getenv("GOOGLE_WORKSPACE_REFRESH_TOKEN", ""))
+    if not (client_id and client_secret and refresh_token):
+        raise ValueError(
+            "Google Workspace remote MCP requires GOOGLE_WORKSPACE_ACCESS_TOKEN or "
+            "GOOGLE_WORKSPACE_CLIENT_ID, GOOGLE_WORKSPACE_CLIENT_SECRET, and "
+            "GOOGLE_WORKSPACE_REFRESH_TOKEN."
+        )
+
+    body = urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")[:1200]
+        raise ValueError(f"Google OAuth token refresh failed with HTTP {e.code}: {detail}") from e
+    access_token = str(payload.get("access_token", "")).strip()
+    if not access_token:
+        raise ValueError(f"Google OAuth token response did not include an access_token: {payload}")
+    return access_token
+
+
+def _fetch_outlook_access_token() -> str:
+    client_id = _compact_secret(os.getenv("OUTLOOK_CLIENT_ID", ""))
+    client_secret = _compact_secret(os.getenv("OUTLOOK_CLIENT_SECRET", ""))
+    refresh_token = _compact_secret(os.getenv("OUTLOOK_REFRESH_TOKEN", ""))
+    tenant = os.getenv("OUTLOOK_TENANT_ID", "common").strip() or "common"
+    scopes = os.getenv(
+        "OUTLOOK_SCOPES",
+        "https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access",
+    ).strip()
+    if not refresh_token:
+        explicit = _compact_secret(os.getenv("OUTLOOK_ACCESS_TOKEN", ""))
+        if explicit:
+            return explicit
+
+    if not (client_id and refresh_token):
+        raise ValueError(
+            "Outlook integration requires OUTLOOK_ACCESS_TOKEN or "
+            "OUTLOOK_CLIENT_ID and OUTLOOK_REFRESH_TOKEN. OUTLOOK_CLIENT_SECRET "
+            "is required only for confidential app registrations."
+        )
+
+    body_values = {
+        "client_id": client_id,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+        "scope": scopes,
+    }
+    if client_secret:
+        body_values["client_secret"] = client_secret
+    body = urllib.parse.urlencode(body_values).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://login.microsoftonline.com/{urllib.parse.quote(tenant)}/oauth2/v2.0/token",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    access_token = str(payload.get("access_token", "")).strip()
+    if not access_token:
+        raise ValueError(f"Outlook OAuth token response did not include an access_token: {payload}")
+    return access_token
+
+
 def _build_google_workspace_mcp_servers() -> list[mcp.MCPServer]:
     mcp_enabled = _env_flag("GOOGLE_WORKSPACE_MCP_ENABLED", default=False)
     if not mcp_enabled:
         print("MCP disabled: GOOGLE_WORKSPACE_MCP_ENABLED is not truthy.")
         return []
+
+    mode = os.getenv("GOOGLE_WORKSPACE_MCP_MODE", "stdio").strip().lower()
+    allowed_tools = _parse_allowed_tools(os.getenv("GOOGLE_WORKSPACE_MCP_ALLOWED_TOOLS", ""))
+    timeout_seconds = float(os.getenv("GOOGLE_WORKSPACE_MCP_TIMEOUT_SECONDS", "30"))
+    if mode in {"remote", "http", "streamable_http"}:
+        access_token = _fetch_google_oauth_access_token()
+        capabilities = _parse_capabilities(os.getenv("GOOGLE_WORKSPACE_ENABLED_CAPABILITIES", ""))
+        servers: list[mcp.MCPServer] = []
+        for capability in capabilities:
+            url = GOOGLE_WORKSPACE_MCP_ENDPOINTS[capability]
+            print(
+                "MCP enabled:",
+                f"server=google_workspace_{capability}",
+                f"url={url}",
+                f"allowed_tools={len(allowed_tools) if allowed_tools else 'all'}",
+                f"timeout={timeout_seconds}s",
+            )
+            servers.append(
+                mcp.MCPServerHTTP(
+                    url,
+                    transport_type="streamable_http",
+                    allowed_tools=allowed_tools or None,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=timeout_seconds,
+                    client_session_timeout_seconds=timeout_seconds,
+                )
+            )
+        return servers
 
     command = os.getenv("GOOGLE_WORKSPACE_MCP_COMMAND", "uvx").strip()
     if not command:
@@ -94,7 +236,7 @@ def _build_google_workspace_mcp_servers() -> list[mcp.MCPServer]:
     args = _parse_mcp_args(
         os.getenv(
             "GOOGLE_WORKSPACE_MCP_ARGS",
-            '["google-workspace-mcp","--transport","stdio"]',
+            '["--from","google-workspace-mcp","google-workspace-worker","--transport","stdio"]',
         )
     )
     timeout_seconds = float(os.getenv("GOOGLE_WORKSPACE_MCP_TIMEOUT_SECONDS", "30"))
@@ -826,6 +968,57 @@ class WebSearchTools(llm.Toolset):
         with urllib.request.urlopen(req, timeout=self._timeout()) as response:
             return response.read(self._max_bytes())
 
+    def _request_json(self, url: str, headers: dict[str, str]) -> dict:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=self._timeout()) as response:
+            payload = response.read(self._max_bytes()).decode("utf-8", errors="replace")
+        parsed = json.loads(payload)
+        if not isinstance(parsed, dict):
+            raise ValueError("Search API returned a non-object response.")
+        return parsed
+
+    def _brave_search(self, query: str, limit: int) -> dict:
+        api_key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
+        if not api_key:
+            raise ValueError("BRAVE_SEARCH_API_KEY is not configured.")
+
+        freshness = os.getenv("LUNA_SEARCH_FRESHNESS", "").strip()
+        params = {
+            "q": query,
+            "count": str(min(limit, 10)),
+            "safesearch": os.getenv("LUNA_SEARCH_SAFESEARCH", "moderate").strip() or "moderate",
+            "extra_snippets": "true",
+        }
+        if freshness:
+            params["freshness"] = freshness
+
+        url = "https://api.search.brave.com/res/v1/web/search?" + urllib.parse.urlencode(params)
+        payload = self._request_json(
+            url,
+            {
+                "Accept": "application/json",
+                "X-Subscription-Token": api_key,
+                "User-Agent": os.getenv("LUNA_WEB_USER_AGENT", "Quasar-Luna/0.1"),
+            },
+        )
+        results = []
+        for item in payload.get("web", {}).get("results", []):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "")).strip()
+            result_url = str(item.get("url", "")).strip()
+            description = str(item.get("description", "")).strip()
+            snippets = item.get("extra_snippets", [])
+            if isinstance(snippets, list) and snippets:
+                extra = " ".join(str(snippet).strip() for snippet in snippets[:2] if str(snippet).strip())
+                if extra:
+                    description = f"{description} {extra}".strip()
+            if title and result_url:
+                results.append({"title": title, "url": result_url, "snippet": description})
+            if len(results) >= limit:
+                break
+        return {"query": query, "results": results, "source": "brave_search_api"}
+
     def _assert_safe_url(self, url: str) -> str:
         parsed = urllib.parse.urlparse(url.strip())
         if parsed.scheme not in {"http", "https"}:
@@ -846,6 +1039,13 @@ class WebSearchTools(llm.Toolset):
             if not clean_query:
                 return "Error: query cannot be empty."
             limit = max(1, min(int(max_results), 10))
+            provider = os.getenv("LUNA_SEARCH_PROVIDER", "brave").strip().lower()
+            if provider == "brave" and os.getenv("BRAVE_SEARCH_API_KEY", "").strip():
+                payload = await asyncio.to_thread(self._brave_search, clean_query, limit)
+                if payload["results"]:
+                    return json.dumps(payload, ensure_ascii=False)
+                return "No search results found."
+
             search_url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode({"q": clean_query})
 
             raw = await asyncio.to_thread(self._request, search_url)
@@ -903,6 +1103,293 @@ class WebSearchTools(llm.Toolset):
             )
         except urllib.error.URLError as e:
             return f"Error: webpage request failed: {e}"
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class OutlookTools(llm.Toolset):
+    def __init__(self):
+        super().__init__(id="outlook_tools")
+        print(
+            "Outlook tools initialized:",
+            f"enabled={_env_flag('OUTLOOK_ENABLED', default=False)}",
+            f"tenant={os.getenv('OUTLOOK_TENANT_ID', 'common')}",
+            f"client_id_set={bool(_compact_secret(os.getenv('OUTLOOK_CLIENT_ID', '')))}",
+            f"refresh_token_set={bool(_compact_secret(os.getenv('OUTLOOK_REFRESH_TOKEN', '')))}",
+            f"access_token_set={bool(_compact_secret(os.getenv('OUTLOOK_ACCESS_TOKEN', '')))}",
+        )
+
+    def _timeout(self) -> float:
+        return float(os.getenv("OUTLOOK_TIMEOUT_SECONDS", "20"))
+
+    def _max_bytes(self) -> int:
+        return int(os.getenv("OUTLOOK_MAX_BYTES", "1500000"))
+
+    def _request_json(
+        self,
+        url: str,
+        access_token: str,
+        method: str = "GET",
+        body: dict | None = None,
+    ) -> dict:
+        encoded_body = None
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Prefer": 'outlook.body-content-type="text"',
+            "User-Agent": os.getenv("LUNA_WEB_USER_AGENT", "Quasar-Luna/0.1"),
+        }
+        if body is not None:
+            encoded_body = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(
+            url,
+            data=encoded_body,
+            headers=headers,
+            method=method,
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout()) as response:
+            payload = response.read(self._max_bytes()).decode("utf-8", errors="replace")
+        if not payload.strip():
+            return {}
+        parsed = json.loads(payload)
+        if not isinstance(parsed, dict):
+            raise ValueError("Microsoft Graph returned a non-object response.")
+        return parsed
+
+    def _parse_recipients(self, raw_recipients: str) -> list[dict]:
+        values = [item.strip() for item in re.split(r"[;,]", raw_recipients) if item.strip()]
+        if not values:
+            raise ValueError("At least one recipient email address is required.")
+        return [{"emailAddress": {"address": value}} for value in values]
+
+    def _message_payload(
+        self,
+        to_recipients: str,
+        subject: str,
+        body: str,
+        cc_recipients: str = "",
+        bcc_recipients: str = "",
+        content_type: str = "Text",
+    ) -> dict:
+        content_type = content_type.strip().lower()
+        if content_type not in {"text", "html"}:
+            raise ValueError("content_type must be Text or HTML.")
+        return {
+            "subject": subject.strip(),
+            "body": {
+                "contentType": "HTML" if content_type == "html" else "Text",
+                "content": body,
+            },
+            "toRecipients": self._parse_recipients(to_recipients),
+            "ccRecipients": self._parse_recipients(cc_recipients) if cc_recipients.strip() else [],
+            "bccRecipients": self._parse_recipients(bcc_recipients) if bcc_recipients.strip() else [],
+        }
+
+    def _normalize_message(self, item: dict) -> dict:
+        sender = item.get("from") or item.get("sender") or {}
+        email = sender.get("emailAddress", {}) if isinstance(sender, dict) else {}
+        body_preview = str(item.get("bodyPreview", "") or "").strip()
+        return {
+            "id": str(item.get("id", "") or ""),
+            "subject": str(item.get("subject", "") or "(no subject)"),
+            "from": {
+                "name": str(email.get("name", "") or ""),
+                "address": str(email.get("address", "") or ""),
+            },
+            "receivedDateTime": str(item.get("receivedDateTime", "") or ""),
+            "isRead": bool(item.get("isRead", False)),
+            "webLink": str(item.get("webLink", "") or ""),
+            "bodyPreview": body_preview[:500],
+        }
+
+    def _search_mail(self, query: str, limit: int) -> dict:
+        access_token = _fetch_outlook_access_token()
+        select = "id,subject,from,sender,receivedDateTime,isRead,webLink,bodyPreview"
+        params = {
+            "$top": str(min(limit, 25)),
+            "$select": select,
+        }
+        if query.strip():
+            # Microsoft Graph message search expects a quoted search expression.
+            escaped_query = query.replace('"', '\\"')
+            params["$search"] = f'"{escaped_query}"'
+        else:
+            params["$orderby"] = "receivedDateTime desc"
+
+        url = "https://graph.microsoft.com/v1.0/me/messages?" + urllib.parse.urlencode(params)
+        payload = self._request_json(url, access_token)
+        messages = [
+            self._normalize_message(item)
+            for item in payload.get("value", [])
+            if isinstance(item, dict)
+        ]
+        return {
+            "query": query,
+            "results": messages[:limit],
+            "source": "microsoft_graph_outlook",
+        }
+
+    def _get_message(self, message_id: str) -> dict:
+        access_token = _fetch_outlook_access_token()
+        select = "id,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,isRead,webLink,body,bodyPreview"
+        params = {"$select": select}
+        quoted_id = urllib.parse.quote(message_id.strip(), safe="")
+        url = f"https://graph.microsoft.com/v1.0/me/messages/{quoted_id}?" + urllib.parse.urlencode(params)
+        payload = self._request_json(url, access_token)
+        result = self._normalize_message(payload)
+        body = payload.get("body", {})
+        if isinstance(body, dict):
+            result["body"] = {
+                "contentType": str(body.get("contentType", "") or ""),
+                "content": str(body.get("content", "") or "")[:8000],
+            }
+        result["toRecipients"] = payload.get("toRecipients", [])
+        result["ccRecipients"] = payload.get("ccRecipients", [])
+        return result
+
+    @llm.function_tool
+    async def outlook_search_mail(
+        self,
+        query: Annotated[str, "Search text for Outlook mail. Leave empty to list recent messages."] = "",
+        max_results: Annotated[int, "Number of messages to return, from 1 to 25"] = 10,
+    ) -> str:
+        """Search or list Outlook messages through Microsoft Graph."""
+        try:
+            if not _env_flag("OUTLOOK_ENABLED", default=False):
+                return "Error: Outlook integration is disabled in Quasar Settings > Quirks."
+            limit = max(1, min(int(max_results), 25))
+            payload = await asyncio.to_thread(self._search_mail, query.strip(), limit)
+            if not payload["results"]:
+                return "No Outlook messages found."
+            return json.dumps(payload, ensure_ascii=False)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:1000]
+            return f"Error: Microsoft Graph request failed with HTTP {e.code}: {detail}"
+        except urllib.error.URLError as e:
+            return f"Error: Microsoft Graph request failed: {e}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def outlook_read_mail(
+        self,
+        message_id: Annotated[str, "Microsoft Graph Outlook message id to read"],
+    ) -> str:
+        """Read a full Outlook message body by message id."""
+        try:
+            if not _env_flag("OUTLOOK_ENABLED", default=False):
+                return "Error: Outlook integration is disabled in Quasar Settings > Quirks."
+            if not message_id.strip():
+                return "Error: message_id is required."
+            payload = await asyncio.to_thread(self._get_message, message_id)
+            return json.dumps(payload, ensure_ascii=False)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:1000]
+            return f"Error: Microsoft Graph request failed with HTTP {e.code}: {detail}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def outlook_create_draft(
+        self,
+        to_recipients: Annotated[str, "Recipient email addresses separated by commas or semicolons"],
+        subject: Annotated[str, "Draft email subject"],
+        body: Annotated[str, "Draft email body"],
+        cc_recipients: Annotated[str, "Optional CC email addresses separated by commas or semicolons"] = "",
+        bcc_recipients: Annotated[str, "Optional BCC email addresses separated by commas or semicolons"] = "",
+        content_type: Annotated[str, "Body format: Text or HTML"] = "Text",
+    ) -> str:
+        """Create an Outlook draft message through Microsoft Graph."""
+        try:
+            if not _env_flag("OUTLOOK_ENABLED", default=False):
+                return "Error: Outlook integration is disabled in Quasar Settings > Quirks."
+            access_token = _fetch_outlook_access_token()
+            message = self._message_payload(
+                to_recipients,
+                subject,
+                body,
+                cc_recipients,
+                bcc_recipients,
+                content_type,
+            )
+            payload = await asyncio.to_thread(
+                self._request_json,
+                "https://graph.microsoft.com/v1.0/me/messages",
+                access_token,
+                "POST",
+                message,
+            )
+            return json.dumps({"status": "draft_created", "message": self._normalize_message(payload)}, ensure_ascii=False)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:1000]
+            return f"Error: Microsoft Graph request failed with HTTP {e.code}: {detail}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def outlook_send_mail(
+        self,
+        to_recipients: Annotated[str, "Recipient email addresses separated by commas or semicolons"],
+        subject: Annotated[str, "Email subject"],
+        body: Annotated[str, "Email body"],
+        cc_recipients: Annotated[str, "Optional CC email addresses separated by commas or semicolons"] = "",
+        bcc_recipients: Annotated[str, "Optional BCC email addresses separated by commas or semicolons"] = "",
+        content_type: Annotated[str, "Body format: Text or HTML"] = "Text",
+        save_to_sent_items: Annotated[bool, "Save message to Sent Items"] = True,
+    ) -> str:
+        """Send an Outlook email through Microsoft Graph."""
+        try:
+            if not _env_flag("OUTLOOK_ENABLED", default=False):
+                return "Error: Outlook integration is disabled in Quasar Settings > Quirks."
+            access_token = _fetch_outlook_access_token()
+            message = self._message_payload(
+                to_recipients,
+                subject,
+                body,
+                cc_recipients,
+                bcc_recipients,
+                content_type,
+            )
+            await asyncio.to_thread(
+                self._request_json,
+                "https://graph.microsoft.com/v1.0/me/sendMail",
+                access_token,
+                "POST",
+                {"message": message, "saveToSentItems": bool(save_to_sent_items)},
+            )
+            return json.dumps({"status": "accepted", "savedToSentItems": bool(save_to_sent_items)}, ensure_ascii=False)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:1000]
+            return f"Error: Microsoft Graph request failed with HTTP {e.code}: {detail}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    @llm.function_tool
+    async def outlook_mark_mail_read(
+        self,
+        message_id: Annotated[str, "Microsoft Graph Outlook message id"],
+        is_read: Annotated[bool, "True marks read, false marks unread"] = True,
+    ) -> str:
+        """Mark an Outlook message read or unread."""
+        try:
+            if not _env_flag("OUTLOOK_ENABLED", default=False):
+                return "Error: Outlook integration is disabled in Quasar Settings > Quirks."
+            if not message_id.strip():
+                return "Error: message_id is required."
+            access_token = _fetch_outlook_access_token()
+            quoted_id = urllib.parse.quote(message_id.strip(), safe="")
+            payload = await asyncio.to_thread(
+                self._request_json,
+                f"https://graph.microsoft.com/v1.0/me/messages/{quoted_id}",
+                access_token,
+                "PATCH",
+                {"isRead": bool(is_read)},
+            )
+            return json.dumps({"status": "updated", "message": self._normalize_message(payload)}, ensure_ascii=False)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:1000]
+            return f"Error: Microsoft Graph request failed with HTTP {e.code}: {detail}"
         except Exception as e:
             return f"Error: {e}"
 
@@ -1157,6 +1644,7 @@ async def entrypoint(ctx: JobContext):
                 TaskTools(_resolve_livekit_username),
                 NoteTools(_resolve_livekit_username),
                 WebSearchTools(),
+                OutlookTools(),
                 DelegationTools(),
                 delegator_instance,
                 *extra_tools,
@@ -1256,9 +1744,12 @@ async def entrypoint(ctx: JobContext):
 
 if __name__ == "__main__":
     _log_mcp_preflight()
+    worker_port = int(os.getenv("LUNA_WORKER_PORT", "0"))
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             agent_name=os.getenv("AGENT_NAME", "gemini_voice_agent"),
+            host="127.0.0.1",
+            port=worker_port,
         )
     )

@@ -35,7 +35,6 @@ export function LunaMiniVisualizer() {
   return (
     <AnimatePresence>
       <motion.div
-        layout
         onMouseEnter={handleHoverNear}
         initial={{ opacity: 0, scale: 0.8, y: 20 }}
         animate={{ 
@@ -46,13 +45,17 @@ export function LunaMiniVisualizer() {
         exit={{ opacity: 0, scale: 0.8, y: 20 }}
         transition={{ type: "spring", damping: 20, stiffness: 300 }}
         className={cn(
-          "fixed bottom-6 z-40 flex h-20 w-20 items-center justify-center rounded-2xl border border-white/10 shadow-[0_18px_48px_rgba(0,0,0,0.5)] backdrop-blur-xl",
+          "fixed bottom-6 z-40 flex h-20 w-20 flex-none items-center justify-center rounded-2xl border border-white/10 shadow-[0_18px_48px_rgba(0,0,0,0.5)] backdrop-blur-xl",
           side === "left" ? "left-6" : "right-6",
           isBlinking && "animate-pulse opacity-50"
         )}
         style={{ 
           backgroundColor: `rgba(16, 16, 20, ${transparency})`,
           pointerEvents: "auto",
+          width: "5rem",
+          height: "5rem",
+          minHeight: "5rem",
+          maxHeight: "5rem",
         }}
         aria-label="Luna activity"
       >

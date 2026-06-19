@@ -14,6 +14,19 @@ export type SessionToken = {
   user: UserProfile;
 };
 
+export type OnboardingStatus = {
+  isFirstLaunch: boolean;
+};
+
+export type CompleteOnboardingPayload = {
+  voice: string;
+  persona: string;
+  googleApiKey: string;
+  name: string;
+  email: string;
+  password: string;
+};
+
 export type TaskStatus = "todo" | "in_progress" | "done";
 export type TaskPriority = "high" | "medium" | "low";
 export type ViewMode = "list" | "card";
@@ -92,6 +105,16 @@ export async function registerUser(payload: {
     password: payload.password,
     display_name: payload.displayName
   });
+}
+
+export async function getOnboardingStatus(): Promise<OnboardingStatus> {
+  assertTauriRuntime();
+  return invoke<OnboardingStatus>("get_onboarding_status");
+}
+
+export async function completeOnboarding(payload: CompleteOnboardingPayload): Promise<SessionToken> {
+  assertTauriRuntime();
+  return invoke<SessionToken>("complete_onboarding", { payload });
 }
 
 export async function login(payload: {

@@ -7,7 +7,7 @@ export function ProtectedRoute() {
   const location = useLocation();
 
   if (isLoading) {
-    return <div className="flex min-h-screen items-center justify-center text-muted">Loading...</div>;
+    return <div className="flex min-h-full items-center justify-center text-muted">Loading...</div>;
   }
 
   if (!token) {

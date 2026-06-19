@@ -6,7 +6,7 @@ type AuthState = {
   user: UserProfile | null;
   isLoading: boolean;
   hydrate: () => Promise<void>;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   setAuth: (token: string, user: UserProfile) => void;
   setUser: (user: UserProfile) => void;
@@ -15,12 +15,24 @@ type AuthState = {
 
 const storageKey = "luna_session_token";
 
+const readStoredToken = () => localStorage.getItem(storageKey);
+const writeStoredToken = (token: string, rememberMe: boolean) => {
+  if (rememberMe) {
+    localStorage.setItem(storageKey, token);
+  } else {
+    localStorage.removeItem(storageKey);
+  }
+};
+const clearStoredToken = () => {
+  localStorage.removeItem(storageKey);
+};
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   sessionToken: null,
   user: null,
   isLoading: true,
   hydrate: async () => {
-    const token = localStorage.getItem(storageKey);
+    const token = readStoredToken();
     if (!token) {
       set({ isLoading: false, sessionToken: null, user: null });
       return;
@@ -29,13 +41,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const user = await getCurrentUser(token);
       set({ sessionToken: token, user, isLoading: false });
     } catch {
-      localStorage.removeItem(storageKey);
+      clearStoredToken();
       set({ sessionToken: null, user: null, isLoading: false });
     }
   },
-  signIn: async (email, password) => {
+  signIn: async (email, password, rememberMe = true) => {
     const result = await login({ email, password });
-    localStorage.setItem(storageKey, result.token);
+    writeStoredToken(result.token, rememberMe);
     set({ sessionToken: result.token, user: result.user, isLoading: false });
   },
   signOut: async () => {
@@ -47,16 +59,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // ignore logout errors on client-side cleanup
       }
     }
-    localStorage.removeItem(storageKey);
+    clearStoredToken();
     set({ sessionToken: null, user: null });
   },
   setAuth: (token, user) => {
-    localStorage.setItem(storageKey, token);
+    writeStoredToken(token, true);
     set({ sessionToken: token, user, isLoading: false });
   },
   setUser: (user) => set({ user }),
   clearAuth: () => {
-    localStorage.removeItem(storageKey);
+    clearStoredToken();
     set({ sessionToken: null, user: null });
   }
 }));

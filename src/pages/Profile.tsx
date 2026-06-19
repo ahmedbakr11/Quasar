@@ -41,7 +41,7 @@ export default function Profile() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-40px)] bg-background pb-28">
+    <div className="app-page-scroll bg-background pb-28">
       <main className="flex items-start justify-center p-8">
         <div className="w-full max-w-2xl rounded-xl border border-border bg-surface p-6">
           <div className="mb-6 flex items-center gap-4">

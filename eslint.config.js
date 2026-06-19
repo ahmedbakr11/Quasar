@@ -6,7 +6,15 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores([
+    'dist',
+    'dist-ssr',
+    'node_modules',
+    'src-tauri/target',
+    'Luna_Agent/.venv-release',
+    'Luna_Agent/build',
+    'Luna_Agent/dist',
+  ]),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

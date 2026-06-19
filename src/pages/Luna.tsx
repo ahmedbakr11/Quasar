@@ -18,7 +18,7 @@ export default function Luna() {
   if (!sessionToken) return <Navigate to="/login" replace />;
 
   return (
-    <div className="h-[calc(100vh-40px)] bg-[#0a0a0a] pb-28">
+    <div className="h-full min-h-0 bg-[#0a0a0a] pb-28">
       <AnimatePresence mode="wait">
         {!isConfigured && (
           <motion.div

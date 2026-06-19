@@ -12,6 +12,8 @@ if (!(Test-Path $resourceBin)) {
   New-Item -ItemType Directory -Force -Path $resourceBin | Out-Null
 }
 
+& (Join-Path $PSScriptRoot "build-luna-agent.ps1")
+
 if (!(Test-Path $livekitServer)) {
   Write-Warning "Missing $livekitServer"
   Write-Warning "Place the Windows LiveKit server binary there before producing a distributable installer."

@@ -6,6 +6,7 @@ use livekit_api::access_token::VideoGrants;
 use rusqlite::{params, Connection};
 use tauri::State;
 
+use crate::commands::runtime::RuntimeManager;
 use crate::db::{connection, AppState};
 use crate::models::user::UserProfile;
 
@@ -178,7 +179,12 @@ pub fn save_agent_config(
 }
 
 #[tauri::command]
-pub fn load_agent_config(state: State<AppState>, session_token: String) -> Result<AgentConfig, String> {
+pub fn load_agent_config(
+    state: State<AppState>,
+    runtime: State<RuntimeManager>,
+    session_token: String,
+) -> Result<AgentConfig, String> {
+    runtime.ensure_local_config()?;
     let conn = connection(&state)?;
     validate_session(&conn, &session_token)?;
 
@@ -197,7 +203,12 @@ pub fn load_agent_config(state: State<AppState>, session_token: String) -> Resul
 }
 
 #[tauri::command]
-pub fn generate_livekit_token(state: State<AppState>, session_token: String) -> Result<String, String> {
+pub fn generate_livekit_token(
+    state: State<AppState>,
+    runtime: State<RuntimeManager>,
+    session_token: String,
+) -> Result<String, String> {
+    runtime.ensure_local_config()?;
     let conn = connection(&state)?;
     let user_id = validate_session(&conn, &session_token)?;
     let user = find_user_by_id(&conn, &user_id)?;
@@ -226,7 +237,12 @@ pub fn generate_livekit_token(state: State<AppState>, session_token: String) -> 
 }
 
 #[tauri::command]
-pub fn test_agent_connection(state: State<AppState>, session_token: String) -> Result<String, String> {
+pub fn test_agent_connection(
+    state: State<AppState>,
+    runtime: State<RuntimeManager>,
+    session_token: String,
+) -> Result<String, String> {
+    runtime.ensure_local_config()?;
     let conn = connection(&state)?;
     let user_id = validate_session(&conn, &session_token)?;
     let user = find_user_by_id(&conn, &user_id)?;

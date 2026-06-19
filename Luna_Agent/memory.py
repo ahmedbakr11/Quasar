@@ -23,10 +23,9 @@ def resolve_memory_path(memory_file: str) -> str:
     expanded = os.path.expanduser(memory_file)
     if os.path.isabs(expanded):
         return os.path.abspath(expanded)
-    # Resolve relative paths from the project directory (where this file lives),
-    # not from the process CWD, so writes are consistent.
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(os.path.join(base_dir, expanded))
+    # Quasar launches packaged Luna with the app-data directory as CWD.
+    # Keep relative memory paths there so they persist outside PyInstaller temp dirs.
+    return os.path.abspath(os.path.join(os.getcwd(), expanded))
 
 
 def _debug_enabled() -> bool:
@@ -44,7 +43,7 @@ def load_memory_state(
     memory_path = resolve_memory_path(memory_file)
     try:
         if not os.path.exists(memory_path):
-            return "", []
+            return "", "", []
         with open(memory_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
